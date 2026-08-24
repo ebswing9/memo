@@ -1,0 +1,2053 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>memo</title>
+<style>
+  @import url("https://fonts.googleapis.com/css2?family=Gowun+Batang&display=swap");
+  @import url('https://cdn.jsdelivr.net/gh/sunn-us/SUIT@2/fonts/variable/woff2/SUIT-Variable.css');
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css'); /* 메모 폰트 즐겨찾기 선택지로만 사용 */
+
+  :root {
+    /* 메모 배경색 (메모마다 다름, 캔버스에만 영향) */
+    --bg-1: #F3EEFF;
+    --bg-2: #EAF6FF;
+
+    /* 앱 크롬(사이드바/설정창/버튼) 색 — 항상 고정, 메모 배경에 영향받지 않음 */
+    --text-main: #2B2438;
+    --text-muted: #8A82A0;
+    --card: #FFFFFF;
+    --border: #E7E1F5;
+    --shadow-color: 43,36,56;
+    --ui-accent: #6E6478; /* 채도 낮은 고정 포인트 컬러. 토글/버튼 등에 사용 */
+
+    /* 글쓰기 캔버스 + 상단바 전용 (메모 배경 위에 바로 있어서 대비를 위해 JS가 계산) */
+    --editor-text: var(--text-main);
+    --editor-muted: var(--text-muted);
+    --accent: #B7AFC4; /* 진행바/저장표시 등 아주 작은 포인트. 메모별로 은은하게 바뀜 */
+
+    --font-ui: 'SUIT Variable', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-write: 'Gowun Batang', Georgia, serif;
+    --font-size-write: 20px;
+    --sidebar-w: 264px;
+    --ease: cubic-bezier(.25,.8,.35,1);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; min-height: 100vh; font-family: var(--font-ui);
+    color: var(--text-main); letter-spacing: -0.006em;
+    background-size: cover; background-position: center; background-attachment: fixed;
+    background-image: linear-gradient(160deg, var(--bg-1), var(--bg-2));
+    transition: background-color .5s var(--ease);
+  }
+  body.has-image { background-image: var(--custom-bg-image, none); }
+  .hidden { display: none !important; }
+
+  /* ---------- 커스텀 스크롤바 ---------- */
+  * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-muted) 35%, transparent) transparent; }
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-muted) 32%, transparent);
+    border-radius: 999px; border: 2px solid transparent; background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ui-accent) 60%, var(--text-muted) 20%); background-clip: padding-box; }
+
+  #btn-sidebar-close-mobile { display: none; }
+
+  /* ---------- 토스트 ---------- */
+  #app-toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 14px);
+    background: rgba(30,25,40,0.94); color: #fff; padding: 11px 18px; border-radius: 12px;
+    font-size: 12.5px; font-family: var(--font-ui); z-index: 100; max-width: min(90vw, 420px);
+    box-shadow: 0 14px 34px rgba(0,0,0,0.28); opacity: 0; pointer-events: none;
+    transition: opacity .25s var(--ease), transform .25s var(--ease); line-height: 1.55;
+  }
+  #app-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  #sidebar-backdrop {
+    position: fixed; inset: 0; background: rgba(20,14,36,0.32); z-index: 39; opacity: 0;
+    pointer-events: none; transition: opacity .25s var(--ease);
+  }
+  #sidebar-backdrop.show { opacity: 1; pointer-events: auto; }
+
+  /* ================= 비밀번호 화면 ================= */
+  #gate-overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, var(--bg-1), var(--bg-2)); z-index: 50;
+  }
+  #gate-box {
+    background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: blur(24px) saturate(140%);
+    padding: 46px 40px; border-radius: 24px; width: 100%; max-width: 320px; text-align: center;
+    box-shadow: 0 30px 70px rgba(var(--shadow-color),0.12);
+  }
+  #gate-box h2 {
+    font-family: var(--font-ui); font-weight: 700; font-size: 20px; margin: 0 0 6px; letter-spacing: -0.02em;
+  }
+  #gate-box p { font-size: 12.5px; color: var(--text-muted); margin: 0 0 22px; }
+  #gate-pw {
+    width: 100%; padding: 11px 4px; border: none; border-bottom: 1.5px solid var(--border);
+    font-size: 14px; text-align: center; font-family: inherit; background: transparent;
+    color: var(--text-main); border-radius: 0; transition: border-color .2s var(--ease);
+    letter-spacing: 0.05em;
+  }
+  #gate-pw:focus { outline: none; border-color: var(--ui-accent); }
+  #gate-error { color: #C15A7A; font-size: 12px; margin: 10px 0 0; min-height: 14px; }
+
+  /* ================= 레이아웃 ================= */
+  #app { height: 100vh; height: 100dvh; display: flex; overflow: hidden; }
+
+  #sidebar {
+    width: var(--sidebar-w); flex-shrink: 0;
+    background: color-mix(in srgb, var(--card) 55%, transparent);
+    backdrop-filter: blur(26px) saturate(140%);
+    -webkit-backdrop-filter: blur(26px) saturate(140%);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    margin-left: 0; transition: margin-left .32s var(--ease), transform .32s var(--ease);
+  }
+  #sidebar.collapsed { margin-left: calc(-1 * var(--sidebar-w)); }
+
+  #sidebar-header { padding: 26px 20px 14px; display: flex; align-items: center; justify-content: space-between; }
+  #sidebar-header .brand { display: flex; align-items: center; gap: 8px; }
+  #sidebar-header .brand-icon { color: var(--text-muted); flex-shrink: 0; }
+  #sidebar-header h1 {
+    font-family: var(--font-ui);
+    font-size: 15px; margin: 0; font-weight: 700; letter-spacing: -0.01em; color: var(--text-main);
+  }
+
+  #sidebar-search-wrap { padding: 0 18px 10px; }
+  #sidebar-search {
+    width: 100%; padding: 9px 4px; border: none; border-bottom: 1.5px solid var(--border);
+    font-size: 13px; background: transparent; font-family: inherit;
+    color: var(--text-main); border-radius: 0; transition: border-color .2s var(--ease);
+  }
+  #sidebar-search::placeholder { color: var(--text-muted); }
+  #sidebar-search:focus { outline: none; border-color: var(--ui-accent); }
+
+  #folder-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .folder-chip {
+    border: none; background: transparent; color: var(--text-muted); font-size: 11px; font-weight: 600;
+    padding: 5px 9px; border-radius: 999px; cursor: pointer; font-family: inherit;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  .folder-chip:hover { color: var(--text-main); }
+  .folder-chip.active { background: color-mix(in srgb, var(--text-main) 9%, transparent); color: var(--text-main); }
+  .folder-chip-add { opacity: .55; }
+  .folder-chip-add:hover { opacity: 1; }
+
+  #btn-new-note {
+    margin: 2px 18px 14px; padding: 8px 4px; border: none;
+    background: transparent; color: var(--text-muted); font-weight: 600; font-size: 12.5px; cursor: pointer;
+    font-family: inherit; text-align: left; display: flex; align-items: center; gap: 7px;
+  }
+  #btn-new-note .plus-ico { font-size: 14px; line-height: 1; color: var(--text-muted); }
+
+  #note-list { flex: 1; overflow-y: auto; padding: 0 12px 16px; }
+  #debug-footer {
+    padding: 8px 16px 12px; font-size: 10px; color: var(--text-muted); opacity: .55;
+    border-top: 1px solid var(--border); line-height: 1.5; word-break: break-all;
+  }
+  #debug-footer:empty { display: none; }
+  #note-list-empty { padding: 30px 10px; font-size: 12px; color: var(--text-muted); text-align: center; }
+
+  .note-item {
+    padding: 11px 12px; border-radius: 12px; cursor: pointer; margin-bottom: 1px;
+    display: flex; flex-direction: column; gap: 3px;
+    transition: background .18s var(--ease);
+  }
+  .note-item:hover { background: color-mix(in srgb, var(--text-main) 4%, transparent); }
+  .note-item.active { background: color-mix(in srgb, var(--text-main) 7%, transparent); }
+  .note-item .n-title {
+    font-size: 13.5px; font-weight: 600; color: var(--text-main);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .note-item .n-meta {
+    font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;
+  }
+  .note-item .n-del {
+    border: none; background: none; color: var(--text-muted); font-size: 10.5px; cursor: pointer;
+    opacity: 0; padding: 2px 5px; border-radius: 6px; transition: opacity .15s var(--ease), color .15s var(--ease);
+  }
+  .note-item:hover .n-del { opacity: 1; }
+  .note-item .n-del:hover { color: #C15A7A; }
+
+  #main { flex: 1; position: relative; min-width: 0; }
+
+  /* ---------- 상단 바 (메모 배경 위, 대비를 위해 editor-text/muted 사용) ---------- */
+  #progress-wrap {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    padding: 14px 20px; display: flex; align-items: center; gap: 10px;
+    transition: left .32s var(--ease);
+  }
+  #app.sidebar-open #progress-wrap { left: var(--sidebar-w); }
+
+  .top-btn {
+    width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+    border: none; background: transparent;
+    color: var(--editor-muted); cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: background .18s var(--ease), color .18s var(--ease);
+  }
+  .top-btn:hover { background: color-mix(in srgb, var(--editor-text) 8%, transparent); color: var(--editor-text); }
+
+  #title-input {
+    flex: 1; min-width: 60px; border: none; background: transparent; outline: none;
+    font-size: 13.5px; font-weight: 600; color: var(--editor-text); font-family: var(--font-ui);
+  }
+  #title-input::placeholder { color: var(--editor-muted); opacity: .7; }
+
+  #folder-select-wrap { flex-shrink: 0; }
+
+  #progress-bar-bg { width: 80px; flex-shrink: 0; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--editor-text) 14%, transparent); overflow: hidden; }
+  #progress-bar-bg.hidden-goal { visibility: hidden; }
+  #progress-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width .3s var(--ease); border-radius: 999px; }
+  #char-count { font-size: 11.5px; color: var(--editor-muted); white-space: nowrap; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  #save-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0; transition: opacity .3s var(--ease); }
+  #save-dot.show { opacity: 1; }
+  #icon-btn-group { display: flex; gap: 2px; flex-shrink: 0; }
+
+  /* ---------- 글쓰기 영역: 완전히 여백만, 테두리 없음 ---------- */
+  #editor-wrap { padding: 96px 28px 60px; display: flex; justify-content: center; height: 100%; }
+  #editor {
+    width: 100%; max-width: 700px; min-height: 70vh;
+    background: none; background-color: transparent !important;
+    border: none !important; box-shadow: none !important; outline: none; resize: none;
+    font-family: var(--font-write); font-size: var(--font-size-write); line-height: 1.95;
+    color: var(--editor-text); padding: 0; caret-color: var(--accent);
+    transition: color .5s var(--ease);
+  }
+  #editor::placeholder { color: var(--editor-muted); opacity: .6; }
+  #editor:disabled { opacity: .35; }
+
+  /* ================= 설정 모달: 고정된 중립 크롬, 메모 배경에 영향받지 않음 ================= */
+  #modal-overlay {
+    position: fixed; inset: 0; background: rgba(20,14,30,0.38); backdrop-filter: blur(4px); z-index: 30;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  @keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  #modal-panel {
+    background: color-mix(in srgb, var(--card) 96%, transparent); backdrop-filter: blur(26px) saturate(140%);
+    border-radius: 22px; padding: 0; width: 100%; max-width: 420px;
+    max-height: 86vh; overflow-y: auto; box-shadow: 0 34px 80px rgba(var(--shadow-color),0.2);
+    font-family: var(--font-ui);
+    animation: riseIn .22s var(--ease);
+  }
+  #modal-head {
+    position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between;
+    padding: 28px 30px 4px; background: linear-gradient(color-mix(in srgb, var(--card) 96%, transparent) 75%, transparent);
+  }
+  #modal-panel h2 { margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
+  #modal-panel .modal-sub { font-size: 11.5px; color: var(--text-muted); margin: 0; line-height: 1.5; }
+  #modal-body { padding: 6px 30px 34px; }
+
+  .settings-section { padding: 22px 0; border-bottom: 1px solid var(--border); }
+  .settings-section:last-of-type { border-bottom: none; padding-bottom: 4px; }
+
+  #modal-panel h3 {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); margin: 0 0 14px;
+  }
+  label.field-label { display: block; font-size: 11.5px; color: var(--text-muted); margin: 14px 0 6px; font-weight: 600; }
+  input[type=number], input[type=url] {
+    width: 100%; padding: 9px 0; border: none; border-bottom: 1.5px solid var(--border);
+    font-size: 13.5px; color: var(--text-main); background: transparent;
+    font-family: inherit; border-radius: 0; transition: border-color .2s var(--ease);
+  }
+
+  /* ---------- 커스텀 드롭다운 (네이티브 select 대신) ---------- */
+  .csel { position: relative; }
+  .csel-btn {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 9px 2px; border: none; border-bottom: 1.5px solid var(--border); background: transparent;
+    font-family: inherit; font-size: 13.5px; color: var(--text-main); cursor: pointer; text-align: left;
+    transition: border-color .2s var(--ease);
+  }
+  .csel-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .csel-arrow {
+    width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid currentColor; opacity: .5; flex-shrink: 0; transition: transform .2s var(--ease);
+  }
+  .csel.open .csel-arrow { transform: rotate(180deg); }
+  .csel.open .csel-btn { border-color: var(--ui-accent); }
+  .csel-list {
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 12;
+    background: color-mix(in srgb, var(--card) 97%, transparent); backdrop-filter: blur(22px) saturate(140%);
+    border-radius: 14px; box-shadow: 0 16px 40px rgba(var(--shadow-color),0.2);
+    padding: 6px; max-height: 240px; overflow-y: auto;
+  }
+  .csel-opt {
+    padding: 8px 10px; border-radius: 9px; font-size: 13px; color: var(--text-main); cursor: pointer;
+    transition: background .12s var(--ease); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .csel-opt:hover { background: color-mix(in srgb, var(--text-main) 6%, transparent); }
+  .csel-opt.active { background: color-mix(in srgb, var(--text-main) 9%, transparent); font-weight: 700; }
+  .csel-disabled { opacity: .5; pointer-events: none; }
+
+  /* 상단바 폴더 드롭다운: 크롬 없이 텍스트만, 메모 배경 위라 editor-text/muted 사용 */
+  #folder-select-wrap.csel { display: inline-flex; color: var(--editor-muted); }
+  #folder-select-wrap .csel-btn {
+    border: none; padding: 0; font-size: 11px; font-weight: 600; background: none;
+    max-width: 96px; color: inherit;
+  }
+  #folder-select-wrap .csel-btn:hover, #folder-select-wrap.open .csel-btn { color: var(--editor-text); }
+  #folder-select-wrap .csel-list { left: auto; right: 0; min-width: 150px; }
+  #favs-body input[type=text], #favs-body textarea {
+    width: 100%; padding: 9px 0; border: none; border-bottom: 1.5px solid var(--border);
+    font-size: 13px; color: var(--text-main); background: transparent;
+    font-family: inherit; border-radius: 0;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--ui-accent); }
+  textarea { resize: vertical; min-height: 46px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 11px; }
+  input[type=color] {
+    width: 36px; height: 36px; border: none; border-radius: 50%; cursor: pointer;
+    padding: 0; background: none; overflow: hidden;
+  }
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type=color]::-webkit-color-swatch { border: 2px solid var(--border); border-radius: 50%; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .color-field { display: flex; flex-direction: column; align-items: center; gap: 7px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
+
+  /* 토글 스위치: 항상 고정된 중립색, 메모 배경에 영향받지 않음 */
+  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; user-select: none; padding: 3px 0; }
+  .switch-row .switch-label { font-size: 13px; font-weight: 500; color: var(--text-main); }
+  .switch-row .switch-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .switch { position: relative; width: 36px; height: 21px; flex-shrink: 0; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; width: 100%; height: 100%; }
+  .switch .track { position: absolute; inset: 0; background: var(--border); border-radius: 999px; transition: background .2s var(--ease); }
+  .switch .thumb {
+    position: absolute; top: 2.5px; left: 2.5px; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .22s var(--ease); pointer-events: none;
+  }
+  .switch input:checked + .track { background: var(--ui-accent); }
+  .switch input:checked ~ .thumb { transform: translateX(15px); }
+  .switch input:focus-visible + .track { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 25%, transparent); }
+
+  input[type=checkbox]:not(.switch input) {
+    appearance: none; width: 16px; height: 16px; flex-shrink: 0;
+    border: 1.5px solid var(--border); border-radius: 5px; background: transparent; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; position: relative;
+  }
+
+  #font-preview {
+    margin-top: 14px; padding: 20px; border-radius: 14px; background: color-mix(in srgb, var(--text-main) 5%, transparent);
+    text-align: center; color: var(--text-main);
+  }
+  .preset-row {
+    display: flex; justify-content: space-between; align-items: center; padding: 9px 0;
+    border-bottom: 1px solid var(--border); font-size: 12.5px;
+  }
+  #toggle-favs, #toggle-bg-image {
+    cursor: pointer; font-size: 12px; color: var(--text-muted); margin-top: 16px; font-weight: 700;
+    user-select: none; display: inline-flex; align-items: center; gap: 4px; transition: color .18s var(--ease);
+  }
+  #toggle-favs:hover, #toggle-bg-image:hover { color: var(--text-main); }
+
+  #modal-close {
+    background: transparent; border: none; width: 28px; height: 28px; border-radius: 50%;
+    font-size: 13px; cursor: pointer; color: var(--text-muted); flex-shrink: 0;
+    transition: background .18s var(--ease), color .18s var(--ease);
+  }
+  #modal-close:hover { background: color-mix(in srgb, var(--text-main) 7%, transparent); color: var(--text-main); }
+
+  /* ---------- 확인/입력 대화상자 (브라우저 기본 confirm/prompt 대체) ---------- */
+  #confirm-overlay {
+    position: fixed; inset: 0; background: rgba(20,14,30,0.4); backdrop-filter: blur(4px); z-index: 60;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  #confirm-panel {
+    background: color-mix(in srgb, var(--card) 97%, transparent); backdrop-filter: blur(26px) saturate(140%);
+    border-radius: 20px; padding: 26px; width: 100%; max-width: 320px;
+    box-shadow: 0 30px 70px rgba(var(--shadow-color),0.24); font-family: var(--font-ui);
+    animation: riseIn .18s var(--ease);
+  }
+  #confirm-message { font-size: 13.5px; color: var(--text-main); margin: 0; line-height: 1.6; }
+  #confirm-input-wrap { margin-top: 14px; }
+  #confirm-input {
+    width: 100%; padding: 9px 0; border: none; border-bottom: 1.5px solid var(--border);
+    font-size: 13.5px; background: transparent; color: var(--text-main); font-family: inherit;
+  }
+  #confirm-input:focus { outline: none; border-color: var(--ui-accent); }
+  #confirm-btn-row { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+  #confirm-btn-row button { width: 100%; }
+
+  /* ---------- 폴더 관리 대화상자 ---------- */
+  #folder-modal-overlay {
+    position: fixed; inset: 0; background: rgba(20,14,30,0.38); backdrop-filter: blur(4px); z-index: 31;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  #folder-modal-panel {
+    background: color-mix(in srgb, var(--card) 96%, transparent); backdrop-filter: blur(26px) saturate(140%);
+    border-radius: 22px; padding: 26px 26px 28px; width: 100%; max-width: 360px;
+    max-height: 80vh; overflow-y: auto; box-shadow: 0 30px 70px rgba(var(--shadow-color),0.2);
+    font-family: var(--font-ui); animation: riseIn .2s var(--ease);
+  }
+  .folder-modal-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+  #folder-modal-panel h2 { margin: 0 0 4px; font-size: 16px; font-weight: 700; }
+  #folder-modal-close {
+    background: transparent; border: none; width: 28px; height: 28px; border-radius: 50%;
+    font-size: 13px; cursor: pointer; color: var(--text-muted); flex-shrink: 0;
+    transition: background .18s var(--ease), color .18s var(--ease);
+  }
+  #folder-modal-close:hover { background: color-mix(in srgb, var(--text-main) 7%, transparent); color: var(--text-main); }
+  #folder-manage-list { margin-bottom: 6px; }
+  .folder-manage-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-main);
+  }
+  .folder-manage-row .fm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder-manage-row .fm-actions { display: flex; gap: 2px; flex-shrink: 0; }
+  .fm-icon-btn {
+    border: none; background: transparent; color: var(--text-muted); width: 26px; height: 26px; border-radius: 8px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  .fm-icon-btn:hover { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
+  .fm-icon-btn.danger:hover { color: #C15A7A; background: rgba(193,90,122,0.1); }
+  #folder-manage-empty { padding: 14px 0; font-size: 12px; color: var(--text-muted); }
+
+  /* ---------- 사이드바 탭 (메모 / 휴지통) ---------- */
+  #sidebar-tabs { display: flex; gap: 14px; padding: 0 18px 10px; }
+  .sidebar-tab {
+    border: none; background: transparent; font-size: 12px; font-weight: 700; color: var(--text-muted);
+    padding: 4px 0; cursor: pointer; border-bottom: 2px solid transparent; font-family: inherit;
+    transition: color .15s var(--ease), border-color .15s var(--ease);
+  }
+  .sidebar-tab.active { color: var(--text-main); border-bottom-color: var(--ui-accent); }
+  .trash-item {
+    padding: 11px 12px; border-radius: 12px; margin-bottom: 1px; display: flex; flex-direction: column; gap: 5px;
+  }
+  .trash-item .n-title { font-size: 13.5px; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trash-item .n-meta { font-size: 11px; color: var(--text-muted); }
+  .trash-item .trash-actions { display: flex; gap: 6px; margin-top: 2px; }
+  .trash-item .trash-actions button {
+    border: none; background: color-mix(in srgb, var(--text-main) 6%, transparent); color: var(--text-main);
+    font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 8px; cursor: pointer; font-family: inherit;
+  }
+  .trash-item .trash-actions button.danger { color: #C15A7A; }
+  #folder-manage-btn {
+    border: none; background: transparent; color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 7px;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  #folder-manage-btn:hover { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
+  #folder-chips-row { display: flex; align-items: center; gap: 4px; padding: 10px 14px 12px 18px; flex-wrap: wrap; }
+  #folder-chips-row #folder-chips { padding: 0; flex: 1; display: flex; gap: 5px; flex-wrap: wrap; }
+
+  button.btn {
+    border: none; border-radius: 999px; padding: 10px 18px; font-size: 12.5px; cursor: pointer;
+    background: color-mix(in srgb, var(--text-main) 7%, transparent); color: var(--text-main); font-weight: 700; font-family: inherit;
+    transition: background .18s var(--ease);
+  }
+  button.btn-primary { background: var(--ui-accent); color: #fff; }
+  button.btn-danger { background: transparent; color: #C15A7A; border: 1.5px solid rgba(193,90,122,0.3); }
+  button.btn-danger:hover { background: rgba(193,90,122,0.08); }
+  button.btn:hover:not(.btn-danger) { background: color-mix(in srgb, var(--text-main) 12%, transparent); }
+  button.btn-primary:hover { filter: brightness(1.08); }
+
+  /* ================================================================
+     반응형 (모바일)
+     ================================================================ */
+  @media (max-width: 768px) {
+    #btn-sidebar-close-mobile { display: flex; }
+
+    #sidebar {
+      position: fixed; top: 0; left: 0; height: 100%; z-index: 40;
+      width: min(84vw, 300px); margin-left: 0 !important;
+      transform: translateX(-100%);
+      transition: transform .3s var(--ease);
+      box-shadow: 6px 0 34px rgba(0,0,0,0.2);
+    }
+    #sidebar:not(.collapsed) { transform: translateX(0); }
+
+    #app.sidebar-open #progress-wrap,
+    #progress-wrap { left: 0 !important; }
+
+    #progress-wrap { padding: 12px 14px; gap: 8px; }
+    .top-btn { width: 30px; height: 30px; }
+    #progress-bar-bg { width: 40px; }
+    .top-select { max-width: 64px; }
+
+    #editor-wrap { padding: 76px 18px 48px; }
+
+    #modal-overlay { align-items: flex-end; padding: 0; }
+    #modal-panel {
+      max-width: 100%; width: 100%; border-radius: 24px 24px 0 0; max-height: 92vh;
+      animation: sheetUp .26s var(--ease);
+    }
+    @keyframes sheetUp { from { transform: translateY(28px); opacity: .5; } to { transform: none; opacity: 1; } }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 비밀번호 화면 ===== -->
+<div id="gate-overlay">
+  <div id="gate-box">
+    <h2>메모장</h2>
+    <p>비밀번호를 입력해주세요</p>
+    <input type="password" id="gate-pw" placeholder="비밀번호">
+    <div id="gate-error"></div>
+    <button class="btn btn-primary" id="btn-gate-submit" style="width:100%;">입장</button>
+  </div>
+</div>
+
+<div id="sidebar-backdrop"></div>
+
+<!-- ===== 앱 본체 ===== -->
+<div id="app" class="hidden sidebar-open">
+
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <div class="brand">
+        <svg class="brand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <h1>memo</h1>
+      </div>
+      <button class="top-btn" id="btn-sidebar-close-mobile" title="닫기" aria-label="사이드바 닫기">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+      </button>
+    </div>
+    <div id="sidebar-search-wrap">
+      <input type="text" id="sidebar-search" placeholder="검색...">
+    </div>
+    <div id="sidebar-tabs">
+      <button class="sidebar-tab active" data-view="notes" type="button">메모</button>
+      <button class="sidebar-tab" data-view="trash" type="button">휴지통</button>
+    </div>
+    <div id="folder-chips-row">
+      <div id="folder-chips"></div>
+      <button id="folder-manage-btn" title="폴더 관리" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </button>
+    </div>
+    <button id="btn-new-note"><span class="plus-ico">+</span>새 메모</button>
+    <div id="note-list"></div>
+    <div id="debug-footer"></div>
+  </div>
+
+  <div id="main">
+    <div id="progress-wrap">
+      <button class="top-btn" id="btn-sidebar-toggle" title="목록 접기/펼치기">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg>
+      </button>
+      <input type="text" id="title-input" placeholder="제목 없음">
+      <div id="folder-select-wrap" title="폴더"></div>
+      <button class="top-btn" id="btn-date-title" title="날짜/시간으로 제목 채우기" style="width:30px;height:30px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4M8 2v4M3 10h18"></path></svg>
+      </button>
+      <div id="progress-bar-bg"><div id="progress-bar-fill"></div></div>
+      <div id="char-count"><span id="char-count-text">0자</span><span id="save-dot" title="저장됨"></span></div>
+      <div id="icon-btn-group">
+        <button class="top-btn" id="btn-top-new" title="새 메모">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+        </button>
+        <button class="top-btn" id="btn-top-delete" title="이 메모 삭제">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+        </button>
+        <button class="top-btn" id="btn-export" title="텍스트 파일로 저장">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 19h14"></path></svg>
+        </button>
+        <button class="top-btn" id="btn-settings" title="이 메모 설정">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="editor-wrap">
+      <textarea id="editor" placeholder="오늘의 글을 시작해보세요..." disabled></textarea>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 메모별 설정 모달 ===== -->
+<div id="confirm-overlay" class="hidden">
+  <div id="confirm-panel">
+    <p id="confirm-message"></p>
+    <div id="confirm-input-wrap" class="hidden"><input type="text" id="confirm-input"></div>
+    <div id="confirm-btn-row"></div>
+  </div>
+</div>
+
+<div id="folder-modal-overlay" class="hidden">
+  <div id="folder-modal-panel">
+    <div class="folder-modal-head">
+      <div>
+        <h2>폴더 관리</h2>
+        <p class="modal-sub">메모를 분류할 폴더를 만들고 정리해요.</p>
+      </div>
+      <button id="folder-modal-close">✕</button>
+    </div>
+    <div id="folder-manage-list"></div>
+    <label class="field-label">새 폴더</label>
+    <div class="row">
+      <input type="text" id="new-folder-name" placeholder="폴더 이름" style="flex:1;">
+      <button class="btn btn-primary" id="btn-add-folder" type="button">추가</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-overlay" class="hidden">
+  <div id="modal-panel">
+    <div id="modal-head">
+      <div>
+        <h2>이 메모의 설정</h2>
+        <p class="modal-sub">여기서 바꾸는 설정은 지금 열려 있는 메모에만 적용돼요.</p>
+      </div>
+      <button id="modal-close">✕</button>
+    </div>
+    <div id="modal-body">
+
+    <div class="settings-section">
+      <h3>목표 글자수</h3>
+      <label class="switch-row">
+        <span class="switch-label">목표 글자수 사용</span>
+        <span class="switch"><input type="checkbox" id="goal-enabled"><span class="track"></span><span class="thumb"></span></span>
+      </label>
+      <input type="number" id="goal-input" min="1" value="1000" style="margin-top:14px;">
+    </div>
+
+    <div class="settings-section">
+      <h3>글쓰기 폰트</h3>
+      <div class="row">
+        <div id="font-select" style="flex:1;"></div>
+        <label style="font-size:12px;color:var(--text-muted);font-weight:600;">크기 <input type="number" id="font-size-input" style="width:50px;" min="12" max="40"></label>
+      </div>
+      <div id="font-preview">이 정도 크기로 이렇게 보여요</div>
+      <div id="toggle-favs">폰트 즐겨찾기 관리 ▸</div>
+      <div id="favs-body" class="hidden" style="margin-top:12px;">
+        <div id="preset-list"></div>
+        <label class="field-label">새 폰트 이름</label>
+        <input type="text" id="new-font-name" placeholder="예: Gowun Batang">
+        <label class="field-label">폰트 임베드 (URL 또는 @font-face 코드)</label>
+        <textarea id="new-font-url"></textarea>
+        <button class="btn" style="margin-top:12px;" id="btn-add-preset" type="button">즐겨찾기에 추가</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>타이핑 소리</h3>
+      <label class="switch-row">
+        <span class="switch-label">타이핑 소리 켜기</span>
+        <span class="switch"><input type="checkbox" id="sound-enabled"><span class="track"></span><span class="thumb"></span></span>
+      </label>
+      <div class="row" style="margin-top:14px;">
+        <div id="sound-type" style="flex:1;"></div>
+        <button class="btn" id="btn-sound-test" type="button">테스트</button>
+      </div>
+      <label class="switch-row" style="margin-top:18px; padding-top:16px; border-top:1px solid color-mix(in srgb, var(--border) 70%, transparent);">
+        <span>
+          <span class="switch-label">타자기 스크롤</span>
+          <div class="switch-desc">커서가 항상 화면 중앙에 오도록 스크롤해요</div>
+        </span>
+        <span class="switch"><input type="checkbox" id="typewriter-scroll"><span class="track"></span><span class="thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="settings-section">
+      <h3>배경 &amp; 테마</h3>
+      <p class="modal-sub" style="margin-bottom:14px;">배경색에 맞춰 버튼과 포인트 색도 자동으로 어울리게 바뀌어요.</p>
+      <div class="row">
+        <span class="color-field">색상 1<input type="color" id="bg-color-1"></span>
+        <span class="color-field">색상 2<input type="color" id="bg-color-2"></span>
+      </div>
+      <div id="toggle-bg-image">배경 이미지 설정 ▸</div>
+      <div id="bg-image-body" class="hidden" style="margin-top:12px;">
+        <label class="field-label">이미지 업로드</label>
+        <input type="file" id="bg-file-input" accept="image/*">
+        <label class="field-label">또는 이미지 URL</label>
+        <input type="url" id="bg-url-input" placeholder="https://...">
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" id="btn-apply-bg-url" type="button">URL 적용</button>
+          <button class="btn btn-danger" id="btn-clear-image" type="button">이미지 지우기</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>새 메모 기본값</h3>
+      <p class="modal-sub" style="margin-bottom:14px;">앞으로 새 메모를 만들 때 어떤 설정으로 시작할지 정해요. 모든 기기에서 동일하게 적용돼요.</p>
+      <label class="switch-row">
+        <span>
+          <span class="switch-label">항상 마지막 메모 설정 그대로 시작</span>
+          <div class="switch-desc">꺼두면 아래 "저장된 기본값"으로 새 메모가 시작돼요</div>
+        </span>
+        <span class="switch"><input type="checkbox" id="use-last-as-default"><span class="track"></span><span class="thumb"></span></span>
+      </label>
+      <button class="btn" style="margin-top:14px; width:100%;" id="btn-save-as-default" type="button">지금 이 설정을 기본값으로 저장</button>
+      <div id="default-saved-hint" style="font-size:11px; color: var(--text-muted); margin-top:8px; min-height:14px;"></div>
+    </div>
+
+    <div class="settings-section">
+      <h3 style="color:#C15A7A;">위험 구역</h3>
+      <button class="btn btn-danger" id="btn-delete-note" type="button" style="width:100%;">이 메모 삭제</button>
+    </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 전역 상태
+// ============================================================
+const PW_KEY = 'notesapp_pw';
+const FONT_PRESETS_KEY = 'notesapp_font_presets';
+const SIDEBAR_KEY = 'notesapp_sidebar_collapsed';
+const DEFAULTS_CACHE_KEY = 'notesapp_creation_defaults';
+const LAST_SETTINGS_KEY = 'notesapp_last_settings';
+
+let password = localStorage.getItem(PW_KEY) || '';
+
+// ============================================================
+// API 호출 계층
+// ------------------------------------------------------------
+// GAS_WEBAPP_URL이 비어있으면: 지금처럼 이 페이지가 Apps Script(HtmlService)에
+//   직접 얹혀서 서비스되는 상태로 보고, google.script.run을 사용합니다.
+// GAS_WEBAPP_URL을 채워두면: 이 페이지는 GitHub Pages 등 다른 곳에서 정적으로
+//   서비스되고, Apps Script는 순수 API 서버로만 fetch()를 통해 호출합니다.
+//   (이렇게 하면 Apps Script가 강제로 붙이는 "Google Apps Script 사용자가
+//   만들었습니다" 배너가 화면에 뜨지 않습니다 — 그 배너는 Apps Script가 직접
+//   HTML 페이지를 서비스할 때만 붙기 때문입니다.)
+//
+// GitHub Pages로 옮기실 때: 아래 GAS_WEBAPP_URL에 배포된 Apps Script 웹앱 주소
+// (.../exec로 끝나는 그 주소)를 붙여넣기만 하면 나머지는 자동으로 전환돼요.
+// ============================================================
+const GAS_WEBAPP_URL = ''https://script.google.com/macros/s/AKfycbyiGa-o6x2gmeNnDq8Wgmit3Bo67mhk-WxlRQ1ngV2DA9lh2mH8SznFKOKH7DcnZ_kD3w/exec'
+
+function callGasRun(action, params) {
+  return new Promise((resolve, reject) => {
+    const run = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+    switch (action) {
+      case 'auth': run.apiAuth(params.pw); break;
+      case 'list': run.apiList(params.pw); break;
+      case 'save': run.apiSave(params.pw, params.note); break;
+      case 'delete': run.apiDelete(params.pw, params.id); break;
+      case 'getDefaults': run.apiGetDefaults(params.pw); break;
+      case 'setDefaults': run.apiSetDefaults(params.pw, params.settings); break;
+      default: reject(new Error('알 수 없는 action: ' + action));
+    }
+  });
+}
+
+function callGasFetch(action, params) {
+  // Content-Type을 text/plain으로 보내는 건 일부러예요 — application/json으로 보내면
+  // 브라우저가 CORS 프리플라이트(OPTIONS) 요청을 먼저 보내는데, Apps Script 웹앱은
+  // 이 프리플라이트 요청에 응답하지 않아서 요청 자체가 실패해요.
+  return fetch(GAS_WEBAPP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ action: action }, params))
+  }).then(r => {
+    if (!r.ok) throw new Error('서버 응답 오류 (HTTP ' + r.status + ')');
+    return r.json();
+  });
+}
+
+function callApi(action, params) {
+  params = params || {};
+  return GAS_WEBAPP_URL ? callGasFetch(action, params) : callGasRun(action, params);
+}
+let notes = [];          // 서버에서 불러온 전체 메모 목록 (휴지통 제외)
+let trashedNotes = [];   // 휴지통에 있는 메모 목록
+let sidebarView = 'notes'; // 'notes' | 'trash'
+let currentId = null;    // 현재 열려 있는 메모(로컬 임시 id 포함)
+let saveTimer = null;
+let isNewDraft = false;  // 아직 서버에 저장 안 된 새 메모인지
+const isMobileView = () => window.matchMedia('(max-width: 768px)').matches;
+function closeMobileSidebar() {
+  if (!isMobileView()) return;
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.getElementById('app').classList.remove('sidebar-open');
+  document.getElementById('sidebar-backdrop').classList.remove('show');
+}
+
+// 새 메모를 만들 때 어떤 설정으로 시작할지 (기기 간 동기화됨)
+function loadCreationDefaultsCache() {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_CACHE_KEY);
+    return raw ? JSON.parse(raw) : { useLastAsDefault: false, savedDefaults: null };
+  } catch (e) { return { useLastAsDefault: false, savedDefaults: null }; }
+}
+function saveCreationDefaultsCache() { localStorage.setItem(DEFAULTS_CACHE_KEY, JSON.stringify(creationDefaults)); }
+let creationDefaults = loadCreationDefaultsCache();
+
+function loadCreationDefaultsFromServer() {
+  callApi('getDefaults', { pw: password })
+    .then(res => {
+      if (res && res.ok && res.defaults) {
+        creationDefaults = Object.assign({ useLastAsDefault: false, savedDefaults: null }, res.defaults);
+        saveCreationDefaultsCache();
+      }
+    })
+    .catch(() => {});
+}
+function persistCreationDefaultsToServer() {
+  saveCreationDefaultsCache();
+  callApi('setDefaults', { pw: password, settings: creationDefaults }).catch(() => {});
+}
+function rememberLastUsedSettings(settings) {
+  try { localStorage.setItem(LAST_SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+}
+function loadLastUsedSettings() {
+  try { const raw = localStorage.getItem(LAST_SETTINGS_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+function getInitialSettingsForNewNote() {
+  const base = defaultSettings();
+  if (creationDefaults.useLastAsDefault) {
+    const last = loadLastUsedSettings();
+    if (last) return Object.assign({}, base, last);
+  }
+  if (creationDefaults.savedDefaults) return Object.assign({}, base, creationDefaults.savedDefaults);
+  return base;
+}
+
+// ---- 에러 토스트 ----
+// ============================================================
+// 커스텀 드롭다운 (네이티브 select는 열린 목록 스타일을 바꿀 수 없어서 직접 구현)
+// ============================================================
+function CustomSelect(container) {
+  this.container = container;
+  container.classList.add('csel');
+  container.innerHTML = '<button type="button" class="csel-btn"><span class="csel-label"></span><span class="csel-arrow"></span></button><div class="csel-list hidden"></div>';
+  this.btn = container.querySelector('.csel-btn');
+  this.labelEl = container.querySelector('.csel-label');
+  this.list = container.querySelector('.csel-list');
+  this.options = [];
+  this.value = null;
+  this.disabled = false;
+  this.onChange = null;
+  this.btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (this.disabled) return;
+    this.toggle();
+  });
+  this.list.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => this.close());
+}
+CustomSelect.prototype.setOptions = function (options) {
+  this.options = options;
+  this._renderList();
+  this._updateLabel();
+};
+CustomSelect.prototype.setValue = function (value) {
+  this.value = value;
+  this._updateLabel();
+  this._renderList();
+};
+CustomSelect.prototype.setDisabled = function (disabled) {
+  this.disabled = disabled;
+  this.container.classList.toggle('csel-disabled', disabled);
+};
+CustomSelect.prototype._updateLabel = function () {
+  const opt = this.options.find(o => o.value === this.value) || this.options[0];
+  this.labelEl.innerText = opt ? opt.label : '';
+  this.labelEl.style.fontFamily = (opt && opt.font) ? `'${opt.font}', Georgia, serif` : '';
+};
+CustomSelect.prototype._renderList = function () {
+  this.list.innerHTML = '';
+  this.options.forEach(o => {
+    const item = document.createElement('div');
+    item.className = 'csel-opt' + (o.value === this.value ? ' active' : '');
+    if (o.font) item.style.fontFamily = `'${o.font}', Georgia, serif`;
+    item.innerText = o.label;
+    item.addEventListener('click', () => {
+      this.setValue(o.value);
+      this.close();
+      if (this.onChange) this.onChange(o.value);
+    });
+    this.list.appendChild(item);
+  });
+};
+CustomSelect.prototype.toggle = function () { this.list.classList.contains('hidden') ? this.open() : this.close(); };
+CustomSelect.prototype.open = function () {
+  document.querySelectorAll('.csel.open').forEach(c => { if (c !== this.container) c.classList.remove('open'); });
+  document.querySelectorAll('.csel-list').forEach(l => { if (l !== this.list) l.classList.add('hidden'); });
+  this.list.classList.remove('hidden');
+  this.container.classList.add('open');
+};
+CustomSelect.prototype.close = function () {
+  this.list.classList.add('hidden');
+  this.container.classList.remove('open');
+};
+
+// ============================================================
+// 확인/입력 대화상자 (브라우저 기본 confirm()/prompt() 대체)
+// ============================================================
+function _setConfirmButtons(buttons) {
+  const row = document.getElementById('confirm-btn-row');
+  row.innerHTML = '';
+  buttons.forEach(b => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn ' + (b.className || '');
+    btn.innerText = b.label;
+    btn.addEventListener('click', b.onClick);
+    row.appendChild(btn);
+  });
+}
+function closeConfirmDialog() { document.getElementById('confirm-overlay').classList.add('hidden'); }
+
+function showConfirm(message, onConfirm, opts) {
+  opts = opts || {};
+  document.getElementById('confirm-message').innerText = message;
+  document.getElementById('confirm-input-wrap').classList.add('hidden');
+  _setConfirmButtons([
+    { label: opts.okLabel || '확인', className: opts.danger ? 'btn-danger' : 'btn-primary', onClick: () => { closeConfirmDialog(); onConfirm(); } },
+    { label: '취소', className: '', onClick: closeConfirmDialog }
+  ]);
+  document.getElementById('confirm-overlay').classList.remove('hidden');
+}
+
+function showPrompt(message, defaultValue, onSubmit) {
+  document.getElementById('confirm-message').innerText = message;
+  const inputWrap = document.getElementById('confirm-input-wrap');
+  const input = document.getElementById('confirm-input');
+  inputWrap.classList.remove('hidden');
+  input.value = defaultValue || '';
+  const submit = () => { const v = input.value.trim(); closeConfirmDialog(); if (v) onSubmit(v); };
+  _setConfirmButtons([
+    { label: '확인', className: 'btn-primary', onClick: submit },
+    { label: '취소', className: '', onClick: closeConfirmDialog }
+  ]);
+  document.getElementById('confirm-overlay').classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+}
+
+// choices: [{ label, action, danger?, primary? }] — onChoose(action)으로 콜백
+function showChoice(message, choices, onChoose) {
+  document.getElementById('confirm-message').innerText = message;
+  document.getElementById('confirm-input-wrap').classList.add('hidden');
+  _setConfirmButtons(choices.map(c => ({
+    label: c.label,
+    className: c.danger ? 'btn-danger' : (c.primary ? 'btn-primary' : ''),
+    onClick: () => { closeConfirmDialog(); onChoose(c.action); }
+  })));
+  document.getElementById('confirm-overlay').classList.remove('hidden');
+}
+
+let fontSelectC, soundTypeC, folderSelectC;
+
+function showToast(msg) {
+  let toast = document.getElementById('app-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'app-toast';
+    document.body.appendChild(toast);
+  }
+  toast.innerText = msg;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  console.error('[memo]', msg);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), 8000);
+}
+
+const defaultFontPresets = [
+  { name: "Gowun Batang", url: "https://fonts.googleapis.com/css2?family=Gowun+Batang&display=swap" },
+  { name: "Noto Serif KR", url: "https://fonts.googleapis.com/css2?family=Noto+Serif+KR&display=swap" },
+  { name: "Nanum Myeongjo", url: "https://fonts.googleapis.com/css2?family=Nanum+Myeongjo&display=swap" },
+  { name: "Jua", url: "https://fonts.googleapis.com/css2?family=Jua&display=swap" },
+  { name: "Pretendard", url: "" }
+];
+function loadFontPresets() {
+  try {
+    const raw = localStorage.getItem(FONT_PRESETS_KEY);
+    return raw ? JSON.parse(raw) : defaultFontPresets.slice();
+  } catch (e) { return defaultFontPresets.slice(); }
+}
+function saveFontPresets(list) {
+  localStorage.setItem(FONT_PRESETS_KEY, JSON.stringify(list));
+}
+let fontPresets = loadFontPresets();
+
+function defaultSettings() {
+  return {
+    goalEnabled: true, goal: 1000,
+    bgColor1: "#F3EEFF", bgColor2: "#EAF6FF", bgImage: "",
+    fontName: "Gowun Batang", fontUrl: "https://fonts.googleapis.com/css2?family=Gowun+Batang&display=swap",
+    fontSize: 20,
+    soundEnabled: false, soundType: "mechanical",
+    typewriterScroll: false
+  };
+}
+
+function getCurrentNote() {
+  return notes.find(n => n.id === currentId) || null;
+}
+
+// ============================================================
+// 비밀번호 게이트
+// ============================================================
+function showGateError(msg) { document.getElementById('gate-error').innerText = msg || ''; }
+
+function tryEnter(pw, isAuto) {
+  callApi('auth', { pw: pw })
+    .then(res => {
+      if (res.ok) {
+        password = pw;
+        localStorage.setItem(PW_KEY, pw);
+        document.getElementById('gate-overlay').classList.add('hidden');
+        document.getElementById('app').classList.remove('hidden');
+        loadCreationDefaultsFromServer();
+        loadNotes();
+      } else {
+        if (!isAuto) showGateError('비밀번호가 올바르지 않아요.');
+        else document.getElementById('gate-overlay').classList.remove('hidden');
+      }
+    })
+    .catch(err => {
+      showGateError('연결에 문제가 있어요: ' + err.message);
+    });
+}
+
+// ============================================================
+// 메모 목록 불러오기 / 렌더링
+// ============================================================
+function loadNotes(isRetry) {
+  callApi('list', { pw: password })
+    .then(res => {
+      try {
+        if (!res) {
+          // 구글 앱스스크립트의 통신 다리에서 응답이 통째로 유실되는 경우가 가끔 있어요.
+          // 한 번은 자동으로 다시 시도해봅니다.
+          if (!isRetry) {
+            console.warn('[memo] apiList 응답이 비어서 한 번 재시도합니다.');
+            setTimeout(() => loadNotes(true), 400);
+            return;
+          }
+          showToast('서버 응답을 받지 못했어요. 페이지를 새로고침해서 다시 시도해주세요. (구글 앱스스크립트 통신 오류일 수 있어요)');
+          return;
+        }
+        if (!res.ok) {
+          showToast('메모 목록을 불러오지 못했어요: ' + (res.error || '알 수 없는 오류') + ' (Code.gs의 SPREADSHEET_ID 설정을 확인해주세요)');
+          return;
+        }
+        console.log('[memo] 지금 웹앱이 보고 있는 시트:', res.debug);
+        const all = res.notes;
+        notes = all.filter(n => !(n.settings && n.settings.deletedAt))
+          .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        trashedNotes = all.filter(n => n.settings && n.settings.deletedAt)
+          .sort((a, b) => ((b.settings.deletedAt) || '').localeCompare((a.settings.deletedAt) || ''));
+        document.getElementById('debug-footer').innerText = '메모 ' + notes.length + '개';
+        renderFolderChips();
+        renderNoteList();
+        if (notes.length > 0) {
+          selectNote(notes[0].id);
+        } else {
+          createNewNote();
+        }
+      } catch (err) {
+        showToast('화면을 그리는 중 오류가 발생했어요: ' + err.message);
+        console.error('[memo] loadNotes 처리 중 오류', err);
+      }
+    })
+    .catch(err => {
+      showToast('서버 연결에 문제가 있어요: ' + err.message);
+    });
+}
+
+// 충돌 해소 등에서, 목록 전체를 다시 불러오지 않고 메모 하나만 최신 내용으로 갱신합니다.
+function reloadSingleNote(id, onDone) {
+  callApi('list', { pw: password })
+    .then(res => {
+      if (!res || !res.ok) { if (onDone) onDone(null); return; }
+      const fresh = res.notes.find(n => n.id === id);
+      if (!fresh) { if (onDone) onDone(null); return; }
+      const idx = notes.findIndex(n => n.id === id);
+      if (idx >= 0) notes[idx] = fresh;
+      if (currentId === id) {
+        document.getElementById('title-input').value = fresh.title || '';
+        document.getElementById('editor').value = fresh.content || '';
+        applyNoteStyles(fresh);
+        updateCount();
+      }
+      renderNoteList();
+      if (onDone) onDone(fresh);
+    })
+    .catch(() => { if (onDone) onDone(null); });
+}
+
+// 기기/브라우저 로케일과 무관하게 항상 똑같은 형식으로 날짜를 만듭니다.
+function formatDateTime(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+    + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function formatDateShort(d) {
+  return String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+}
+
+function displayTitle(note) {
+  if (note.title && note.title.trim()) return note.title.trim();
+  const firstLine = (note.content || '').split('\n')[0].trim();
+  return firstLine || '제목 없음';
+}
+
+function getNoteFolder(n) { return (n.settings && n.settings.folder) || ''; }
+
+function getAllFolders() {
+  const set = new Set();
+  notes.forEach(n => { const f = getNoteFolder(n); if (f) set.add(f); });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
+}
+
+let activeFolder = '__all__';
+
+function renderFolderChips() {
+  const wrap = document.getElementById('folder-chips');
+  wrap.innerHTML = '';
+
+  const makeChip = (label, value, extraClass) => {
+    const el = document.createElement('button');
+    el.className = 'folder-chip' + (activeFolder === value ? ' active' : '') + (extraClass ? ' ' + extraClass : '');
+    el.type = 'button';
+    el.innerText = label;
+    el.addEventListener('click', () => { activeFolder = value; renderFolderChips(); renderNoteList(); });
+    return el;
+  };
+
+  wrap.appendChild(makeChip('전체', '__all__'));
+  getAllFolders().forEach(f => wrap.appendChild(makeChip(f, f)));
+
+  const addChip = document.createElement('button');
+  addChip.className = 'folder-chip folder-chip-add';
+  addChip.type = 'button';
+  addChip.title = '새 폴더';
+  addChip.innerText = '+';
+  addChip.addEventListener('click', () => {
+    showPrompt('새 폴더 이름을 입력하세요', '', (name) => {
+      const note = getCurrentNote();
+      if (note) {
+        note.settings.folder = name;
+        scheduleSave();
+        renderFolderSelectForCurrentNote();
+      }
+      activeFolder = name;
+      renderFolderChips();
+      renderNoteList();
+    });
+  });
+  wrap.appendChild(addChip);
+}
+
+function renderFolderSelectForCurrentNote() {
+  const note = getCurrentNote();
+  const current = note ? getNoteFolder(note) : '';
+  const folders = getAllFolders();
+  const opts = [{ value: '', label: '폴더 없음' }]
+    .concat(folders.map(f => ({ value: f, label: f })))
+    .concat([{ value: '__new__', label: '+ 새 폴더...' }]);
+  folderSelectC.setOptions(opts);
+  folderSelectC.setValue(current);
+  folderSelectC.setDisabled(!note);
+}
+
+function renderNoteList() {
+  const wrap = document.getElementById('note-list');
+
+  if (sidebarView === 'trash') {
+    renderTrashListInto(wrap);
+    return;
+  }
+
+  const q = document.getElementById('sidebar-search').value.trim().toLowerCase();
+  const filtered = notes.filter(n => {
+    if (activeFolder !== '__all__' && getNoteFolder(n) !== activeFolder) return false;
+    if (!q) return true;
+    return (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q);
+  });
+
+  wrap.innerHTML = '';
+  if (filtered.length === 0) {
+    wrap.innerHTML = '<div id="note-list-empty">메모가 없어요</div>';
+    return;
+  }
+  filtered.forEach((n) => {
+    const item = document.createElement('div');
+    item.className = 'note-item' + (n.id === currentId ? ' active' : '');
+    const dateStr = n.updatedAt ? formatDateShort(new Date(n.updatedAt)) : '';
+    item.innerHTML = `
+      <div class="n-title"></div>
+      <div class="n-meta"><span>${dateStr}</span><button class="n-del" data-id="${n.id}">삭제</button></div>
+    `;
+    item.querySelector('.n-title').innerText = displayTitle(n);
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('n-del')) return;
+      selectNote(n.id);
+    });
+    item.querySelector('.n-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteNote(n.id);
+    });
+    wrap.appendChild(item);
+  });
+}
+
+function renderTrashListInto(wrap) {
+  wrap.innerHTML = '';
+  if (trashedNotes.length === 0) {
+    wrap.innerHTML = '<div id="note-list-empty">휴지통이 비어있어요</div>';
+    return;
+  }
+  trashedNotes.forEach((n) => {
+    const deletedAt = (n.settings && n.settings.deletedAt) || '';
+    const dateStr = deletedAt ? formatDateShort(new Date(deletedAt)) : '';
+    const item = document.createElement('div');
+    item.className = 'trash-item';
+    item.innerHTML = `
+      <div class="n-title"></div>
+      <div class="n-meta">${dateStr} 삭제됨 · 30일 후 완전히 삭제돼요</div>
+      <div class="trash-actions">
+        <button class="btn-restore">복원</button>
+        <button class="btn-purge danger">완전 삭제</button>
+      </div>
+    `;
+    item.querySelector('.n-title').innerText = displayTitle(n);
+    item.querySelector('.btn-restore').addEventListener('click', () => restoreNote(n.id));
+    item.querySelector('.btn-purge').addEventListener('click', () => permanentlyDeleteNote(n.id));
+    wrap.appendChild(item);
+  });
+}
+
+// ============================================================
+// 메모 선택 / 새 메모 / 삭제
+// ============================================================
+function selectNote(id) {
+  currentId = id;
+  isNewDraft = false;
+  const note = getCurrentNote();
+  if (!note) return;
+
+  document.getElementById('editor').disabled = false;
+  document.getElementById('title-input').value = note.title || '';
+  document.getElementById('editor').value = note.content || '';
+  applyNoteStyles(note);
+  updateCount();
+  renderFolderSelectForCurrentNote();
+  renderNoteList();
+  if (isMobileView()) closeMobileSidebar();
+}
+
+function createNewNote() {
+  const localId = 'local_' + Date.now();
+  const note = { id: localId, title: '', content: '', settings: getInitialSettingsForNewNote(), createdAt: '', updatedAt: '' };
+  notes.unshift(note);
+  currentId = localId;
+  isNewDraft = true;
+
+  document.getElementById('editor').disabled = false;
+  document.getElementById('title-input').value = '';
+  document.getElementById('editor').value = '';
+  applyNoteStyles(note);
+  updateCount();
+  renderFolderSelectForCurrentNote();
+  renderNoteList();
+  document.getElementById('editor').focus();
+  if (isMobileView()) closeMobileSidebar();
+}
+
+function deleteNote(id) {
+  const note = notes.find(n => n.id === id);
+  if (!note) return;
+  const isLocalOnly = id.toString().startsWith('local_');
+
+  showConfirm(
+    isLocalOnly ? '이 메모를 삭제할까요?' : '이 메모를 휴지통으로 옮길까요? 30일 후 자동으로 완전히 삭제돼요.',
+    () => {
+      const wasCurrent = id === currentId;
+      notes = notes.filter(n => n.id !== id);
+
+      const afterMove = () => {
+        renderFolderChips();
+        renderNoteList();
+        if (wasCurrent) {
+          if (notes.length > 0) selectNote(notes[0].id);
+          else createNewNote();
+        }
+      };
+
+      if (isLocalOnly) { afterMove(); return; }
+
+      note.settings = note.settings || {};
+      note.settings.deletedAt = new Date().toISOString();
+      trashedNotes.unshift(note);
+      saveNoteToServer(note, () => afterMove());
+    },
+    { danger: !isLocalOnly, okLabel: isLocalOnly ? '삭제' : '휴지통으로' }
+  );
+}
+
+function restoreNote(id) {
+  const note = trashedNotes.find(n => n.id === id);
+  if (!note) return;
+  trashedNotes = trashedNotes.filter(n => n.id !== id);
+  if (note.settings) delete note.settings.deletedAt;
+  notes.unshift(note);
+  saveNoteToServer(note, () => {
+    renderFolderChips();
+    renderNoteList();
+    showToast('메모를 복원했어요.');
+  });
+}
+
+function permanentlyDeleteNote(id) {
+  showConfirm('이 메모를 완전히 삭제할까요? 되돌릴 수 없어요.', () => {
+    trashedNotes = trashedNotes.filter(n => n.id !== id);
+    renderNoteList();
+    callApi('delete', { pw: password, id: id })
+      .then(res => { if (res && res.ok === false) showToast('삭제에 실패했어요: ' + (res.error || '')); })
+      .catch(err => showToast('삭제 중 오류: ' + err.message));
+  }, { danger: true, okLabel: '완전 삭제' });
+}
+
+// ============================================================
+// 저장 (디바운스: 입력 멈춘 뒤 1.2초 후 저장, 화면은 그대로 반응)
+// ============================================================
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(doSave, 1200);
+}
+
+function saveNoteToServer(note, onDone) {
+  const wasLocal = note.id.toString().startsWith('local_');
+  const payload = {
+    id: wasLocal ? null : note.id,
+    title: note.title,
+    content: note.content,
+    settings: note.settings,
+    expectedUpdatedAt: wasLocal ? null : (note.updatedAt || null)
+  };
+  callApi('save', { pw: password, note: payload })
+    .then(res => {
+      if (!res) { showToast('저장 응답을 받지 못했어요. 다시 시도해주세요.'); if (onDone) onDone(false); return; }
+      if (res.conflict) {
+        if (onDone) onDone(false);
+        handleSaveConflict(note);
+        return;
+      }
+      if (!res.ok) { showToast('저장에 실패했어요: ' + (res.error || '알 수 없는 오류')); if (onDone) onDone(false); return; }
+      note.id = res.id;
+      note.createdAt = res.createdAt;
+      note.updatedAt = res.updatedAt;
+      if (onDone) onDone(true);
+    })
+    .catch(err => {
+      showToast('저장 중 연결 오류: ' + err.message);
+      if (onDone) onDone(false);
+    });
+}
+
+// 다른 기기가 먼저 저장해서 충돌이 난 경우: 내 변경사항을 잃지 않도록 선택지를 줍니다.
+function handleSaveConflict(note) {
+  if (note._conflictPending) return; // 이미 대화상자가 떠 있으면 중복으로 띄우지 않음
+  note._conflictPending = true;
+  showChoice(
+    '다른 기기에서 방금 이 메모를 수정해서, 지금 내용을 그대로 덮어쓰면 그쪽 수정사항이 사라져요. 어떻게 할까요?',
+    [
+      { label: '취소 (계속 편집)', action: 'cancel' },
+      { label: '최신 내용 불러오기', action: 'reload', danger: true },
+      { label: '내 내용은 새 메모로 저장', action: 'duplicate', primary: true }
+    ],
+    (action) => {
+      if (action === 'duplicate') {
+        const dup = {
+          id: 'local_' + Date.now(),
+          title: (note.title && note.title.trim() ? note.title.trim() : '제목 없음') + ' (충돌 사본)',
+          content: note.content,
+          settings: JSON.parse(JSON.stringify(note.settings || {})),
+          createdAt: '', updatedAt: ''
+        };
+        notes.unshift(dup);
+        saveNoteToServer(dup, () => {
+          renderNoteList();
+          showToast('내 변경사항을 별도 메모로 저장했어요. 이 메모는 최신 내용으로 갱신할게요.');
+          reloadSingleNote(note.id, () => { delete note._conflictPending; });
+        });
+      } else if (action === 'reload') {
+        reloadSingleNote(note.id, () => { delete note._conflictPending; });
+      } else {
+        delete note._conflictPending;
+      }
+    }
+  );
+}
+
+function doSave() {
+  const note = getCurrentNote();
+  if (!note || note._conflictPending) return;
+  const wasNewDraft = isNewDraft;
+  saveNoteToServer(note, (ok) => {
+    if (!ok) return;
+    if (wasNewDraft) { currentId = note.id; isNewDraft = false; }
+    showSaveDot();
+    renderNoteList();
+  });
+}
+
+// 타이핑 멈추고 1.2초 뒤 저장을 기다리다가, 탭을 나가거나 숨겨지면
+// (모바일에서 앱 전환/브라우저 종료 등) 기다리지 않고 바로 저장합니다.
+function flushPendingSave() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    doSave();
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPendingSave();
+});
+window.addEventListener('pagehide', flushPendingSave);
+window.addEventListener('beforeunload', flushPendingSave);
+
+function showSaveDot() {
+  const dot = document.getElementById('save-dot');
+  dot.classList.add('show');
+  clearTimeout(showSaveDot._t);
+  showSaveDot._t = setTimeout(() => dot.classList.remove('show'), 900);
+}
+
+// ============================================================
+// 메모 배경색에 맞춰 UI 색상(포인트/글자/테두리 등)을 자동 계산
+// ============================================================
+function hexToRgb(hex) {
+  hex = (hex || '#F3EEFF').replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  const num = parseInt(hex, 16) || 0;
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      default: h = (r - g) / d + 4;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const toHex = x => Math.round(255 * x).toString(16).padStart(2, '0');
+  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+}
+function relativeLuminance(r, g, b) {
+  const a = [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+}
+function relativeLuminance(r, g, b) {
+  const a = [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+}
+function rgbToHex(r, g, b) {
+  const toHex = x => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+function applyDynamicTheme(bgColor1, bgColor2) {
+  // 앱 크롬(사이드바/설정창/버튼)은 절대 건드리지 않음 — 여기서는 글쓰기 캔버스와
+  // 그 위에 떠 있는 상단 바의 글자색/포인트색만, 배경과 대비가 되도록 아주 은은하게 계산함.
+  const c1 = hexToRgb(bgColor1), c2 = hexToRgb(bgColor2);
+  const avg = { r: (c1.r + c2.r) / 2, g: (c1.g + c2.g) / 2, b: (c1.b + c2.b) / 2 };
+  const lum = relativeLuminance(avg.r, avg.g, avg.b);
+  const isDark = lum < 0.4;
+  const avgHex = rgbToHex(avg.r, avg.g, avg.b);
+
+  const editorText = isDark ? '#EDEAF2' : '#2B2438';
+  const editorMuted = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(43,36,56,0.46)';
+  // 채도를 억지로 올리지 않고, 배경색 자체를 살짝 눌러서(어둡게/밝게) 포인트색으로 사용
+  const accent = `color-mix(in srgb, ${avgHex} 62%, ${isDark ? '#ffffff' : '#000000'} 24%)`;
+
+  const root = document.documentElement.style;
+  root.setProperty('--editor-text', editorText);
+  root.setProperty('--editor-muted', editorMuted);
+  root.setProperty('--accent', accent);
+}
+
+// ============================================================
+// 스타일 적용 (배경/폰트/사운드 등, 메모별)
+// ============================================================
+function applyNoteStyles(note) {
+  const s = note.settings || defaultSettings();
+
+  // 배경
+  const root = document.documentElement.style;
+  root.setProperty('--bg-1', s.bgColor1);
+  root.setProperty('--bg-2', s.bgColor2);
+  if (s.bgImage) {
+    root.setProperty('--custom-bg-image', `url(${s.bgImage})`);
+    document.body.classList.add('has-image');
+  } else {
+    document.body.classList.remove('has-image');
+  }
+  applyDynamicTheme(s.bgColor1, s.bgColor2);
+
+  // 폰트
+  root.setProperty('--font-write', `'${s.fontName}', Georgia, serif`);
+  root.setProperty('--font-size-write', s.fontSize + 'px');
+  applyFontEmbed(s.fontUrl);
+
+  // 목표 글자수 UI
+  document.getElementById('progress-bar-bg').classList.toggle('hidden-goal', !s.goalEnabled);
+
+  rememberLastUsedSettings(s);
+}
+
+function applyFontEmbed(value) {
+  if (!value) return;
+  const isRawCss = value.includes('{') || value.includes('@font-face') || value.includes('@import');
+  if (isRawCss) {
+    let style = document.getElementById('custom-font-style');
+    if (!style) { style = document.createElement('style'); style.id = 'custom-font-style'; document.head.appendChild(style); }
+    if (style.textContent !== value) style.textContent = value;
+  } else {
+    let link = document.getElementById('custom-font-link');
+    if (!link) { link = document.createElement('link'); link.id = 'custom-font-link'; link.rel = 'stylesheet'; document.head.appendChild(link); }
+    if (link.href !== value) link.href = value;
+  }
+}
+
+// ============================================================
+// 글자수 / 진행바
+// ============================================================
+function updateCount() {
+  const note = getCurrentNote();
+  const count = document.getElementById('editor').value.length;
+  const s = (note && note.settings) || defaultSettings();
+  document.getElementById('char-count-text').innerText = s.goalEnabled ? `${count} / ${s.goal}자` : `${count}자`;
+  const pct = s.goalEnabled ? Math.min(100, (count / s.goal) * 100) : 0;
+  document.getElementById('progress-bar-fill').style.width = pct + '%';
+}
+
+// ============================================================
+// 타이핑 소리
+// ============================================================
+let audioCtx = null;
+function ensureAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+function rand(min, max) { return min + Math.random() * (max - min); }
+function noiseBuffer(duration) {
+  const size = Math.max(1, Math.floor(audioCtx.sampleRate * duration));
+  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
+function playClickLayer(duration, filterType, freq, q, peakGain, startDelay) {
+  const t = audioCtx.currentTime + (startDelay || 0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuffer(duration);
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = filterType; filter.frequency.value = freq; if (q) filter.Q.value = q;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(peakGain, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+  src.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+  src.start(t); src.stop(t + duration);
+}
+function playTypeSound() {
+  const note = getCurrentNote();
+  const s = (note && note.settings) || defaultSettings();
+  if (!s.soundEnabled) return;
+  ensureAudioCtx();
+  const j = () => rand(0.85, 1.2);
+  const dj = () => rand(0.85, 1.15);
+
+  if (s.soundType === 'mechanical') {
+    playClickLayer(0.015 * dj(), 'highpass', rand(2600, 3600), 2, 0.8 * j());
+    playClickLayer(0.035 * dj(), 'bandpass', rand(1300, 1800), 3, 0.55 * j(), 0.006);
+  } else if (s.soundType === 'soft') {
+    playClickLayer(0.025 * dj(), 'lowpass', rand(1500, 2000), 0.6, 0.4 * j());
+  } else {
+    const power = rand(0.7, 1.35);
+    playClickLayer(0.01 * dj(), 'highpass', rand(2800, 4200), rand(1.5, 2.5), 0.95 * power);
+    playClickLayer(rand(0.04, 0.07), 'bandpass', rand(4000, 5400), rand(6, 10), 0.35 * power, 0.003);
+    playClickLayer(0.008 * dj(), 'highpass', rand(2400, 3400), 2, rand(0.15, 0.45) * power, rand(0.03, 0.07));
+  }
+}
+
+// ============================================================
+// 타자기 스크롤
+// ============================================================
+function applyTypewriterScroll() {
+  const note = getCurrentNote();
+  const s = (note && note.settings) || defaultSettings();
+  if (!s.typewriterScroll) return;
+  const ta = document.getElementById('editor');
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight);
+  const before = ta.value.slice(0, ta.selectionStart);
+  const lineIdx = before.split('\n').length - 1;
+  const target = lineIdx * lineHeight - ta.clientHeight / 2 + lineHeight / 2;
+  ta.scrollTop = Math.max(0, target);
+}
+
+// ============================================================
+// 폰트 즐겨찾기 UI
+// ============================================================
+function renderFontSelect() {
+  const note = getCurrentNote();
+  const s = (note && note.settings) || defaultSettings();
+  const opts = fontPresets.map((p, i) => ({ value: String(i), label: p.name, font: p.name }));
+  let value;
+  const idx = fontPresets.findIndex(p => p.name === s.fontName);
+  if (idx >= 0) {
+    value = String(idx);
+  } else {
+    opts.unshift({ value: '-1', label: `${s.fontName} (즐겨찾기에 없음)`, font: s.fontName });
+    value = '-1';
+  }
+  fontSelectC.setOptions(opts);
+  fontSelectC.setValue(value);
+}
+function renderPresetList() {
+  const wrap = document.getElementById('preset-list');
+  if (fontPresets.length === 0) { wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted);">즐겨찾기가 없어요.</p>'; return; }
+  wrap.innerHTML = '';
+  fontPresets.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.className = 'preset-row';
+    row.innerHTML = `<span>${p.name}</span><button class="btn btn-danger" data-del="${i}" type="button">삭제</button>`;
+    wrap.appendChild(row);
+  });
+  wrap.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      fontPresets.splice(Number(btn.dataset.del), 1);
+      saveFontPresets(fontPresets);
+      renderPresetList(); renderFontSelect();
+    });
+  });
+}
+function updateFontPreview() {
+  const note = getCurrentNote();
+  const s = (note && note.settings) || defaultSettings();
+  const preview = document.getElementById('font-preview');
+  preview.style.fontFamily = `'${s.fontName}', Georgia, serif`;
+  preview.style.fontSize = s.fontSize + 'px';
+}
+
+// ============================================================
+// 이미지 업로드 (자동 압축)
+// ============================================================
+function handleImageFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 1600;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width * scale; canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const note = getCurrentNote();
+      note.settings.bgImage = canvas.toDataURL('image/jpeg', 0.8);
+      applyNoteStyles(note); scheduleSave();
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ============================================================
+// 설정 모달 열기 (현재 메모 설정값으로 채움)
+// ============================================================
+function openSettingsModal() {
+  const note = getCurrentNote();
+  if (!note) return;
+  const s = note.settings;
+  document.getElementById('goal-enabled').checked = s.goalEnabled;
+  document.getElementById('goal-input').value = s.goal;
+  document.getElementById('bg-color-1').value = s.bgColor1;
+  document.getElementById('bg-color-2').value = s.bgColor2;
+  document.getElementById('font-size-input').value = s.fontSize;
+  document.getElementById('sound-enabled').checked = s.soundEnabled;
+  soundTypeC.setValue(s.soundType);
+  document.getElementById('typewriter-scroll').checked = s.typewriterScroll;
+  document.getElementById('use-last-as-default').checked = !!creationDefaults.useLastAsDefault;
+  document.getElementById('default-saved-hint').innerText = '';
+  renderFontSelect(); renderPresetList(); updateFontPreview();
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// ============================================================
+// 초기화
+// ============================================================
+function init() {
+  // ---- 비밀번호 게이트 ----
+  document.getElementById('btn-gate-submit').addEventListener('click', () => {
+    tryEnter(document.getElementById('gate-pw').value, false);
+  });
+  document.getElementById('gate-pw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') tryEnter(document.getElementById('gate-pw').value, false);
+  });
+  if (password) tryEnter(password, true);
+
+  // ---- 사이드바 ----
+  if (isMobileView()) {
+    // 모바일에서는 들어왔을 때 사이드바를 닫아둔 채로 시작
+    document.getElementById('sidebar').classList.add('collapsed');
+    document.getElementById('app').classList.remove('sidebar-open');
+  } else {
+    const sidebarCollapsed = localStorage.getItem(SIDEBAR_KEY) === '1';
+    if (sidebarCollapsed) {
+      document.getElementById('sidebar').classList.add('collapsed');
+      document.getElementById('app').classList.remove('sidebar-open');
+    }
+  }
+  document.getElementById('btn-sidebar-toggle').addEventListener('click', () => {
+    const sb = document.getElementById('sidebar');
+    const collapsed = sb.classList.toggle('collapsed');
+    document.getElementById('app').classList.toggle('sidebar-open', !collapsed);
+    document.getElementById('sidebar-backdrop').classList.toggle('show', isMobileView() && !collapsed);
+    if (!isMobileView()) localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+  });
+  document.getElementById('btn-sidebar-close-mobile').addEventListener('click', closeMobileSidebar);
+  document.getElementById('sidebar-backdrop').addEventListener('click', closeMobileSidebar);
+  document.getElementById('sidebar-search').addEventListener('input', renderNoteList);
+
+  // ---- 폴더 ----
+  folderSelectC = new CustomSelect(document.getElementById('folder-select-wrap'));
+  folderSelectC.onChange = (val) => {
+    const note = getCurrentNote();
+    if (!note) return;
+    if (val === '__new__') {
+      showPrompt('새 폴더 이름을 입력하세요', '', (name) => {
+        note.settings.folder = name;
+        scheduleSave();
+        renderFolderSelectForCurrentNote();
+        renderFolderChips();
+        renderNoteList();
+      });
+      renderFolderSelectForCurrentNote();
+      return;
+    }
+    note.settings.folder = val;
+    scheduleSave();
+    renderFolderSelectForCurrentNote();
+    renderFolderChips();
+    renderNoteList();
+  };
+  document.getElementById('btn-new-note').addEventListener('click', createNewNote);
+
+  // ---- 사이드바 탭 (메모 / 휴지통) ----
+  document.querySelectorAll('.sidebar-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sidebarView = btn.dataset.view;
+      document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('folder-chips-row').classList.toggle('hidden', sidebarView !== 'notes');
+      document.getElementById('btn-new-note').classList.toggle('hidden', sidebarView !== 'notes');
+      renderNoteList();
+    });
+  });
+
+  // ---- 폴더 관리 ----
+  function renderFolderManageList() {
+    const listEl = document.getElementById('folder-manage-list');
+    const folders = getAllFolders();
+    listEl.innerHTML = '';
+    if (folders.length === 0) {
+      listEl.innerHTML = '<div id="folder-manage-empty">아직 만든 폴더가 없어요</div>';
+      return;
+    }
+    folders.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'folder-manage-row';
+      row.innerHTML = `
+        <span class="fm-name"></span>
+        <span class="fm-actions">
+          <button class="fm-icon-btn fm-rename" title="이름 바꾸기">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+          </button>
+          <button class="fm-icon-btn danger fm-delete" title="폴더 삭제">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+          </button>
+        </span>
+      `;
+      row.querySelector('.fm-name').innerText = f;
+      row.querySelector('.fm-rename').addEventListener('click', () => {
+        showPrompt('새 폴더 이름을 입력하세요', f, (newName) => {
+          if (newName === f) return;
+          const affected = notes.concat(trashedNotes).filter(n => getNoteFolder(n) === f);
+          affected.forEach(n => { n.settings.folder = newName; saveNoteToServer(n, () => {}); });
+          if (activeFolder === f) activeFolder = newName;
+          renderFolderManageList();
+          renderFolderChips();
+          renderFolderSelectForCurrentNote();
+          renderNoteList();
+        });
+      });
+      row.querySelector('.fm-delete').addEventListener('click', () => {
+        showConfirm(
+          `"${f}" 폴더를 삭제할까요? 이 폴더에 있던 메모는 삭제되지 않고, 폴더 지정만 없어져요.`,
+          () => {
+            const affected = notes.concat(trashedNotes).filter(n => getNoteFolder(n) === f);
+            affected.forEach(n => { n.settings.folder = ''; saveNoteToServer(n, () => {}); });
+            if (activeFolder === f) activeFolder = '__all__';
+            renderFolderManageList();
+            renderFolderChips();
+            renderFolderSelectForCurrentNote();
+            renderNoteList();
+          },
+          { danger: true, okLabel: '삭제' }
+        );
+      });
+      listEl.appendChild(row);
+    });
+  }
+  document.getElementById('folder-manage-btn').addEventListener('click', () => {
+    renderFolderManageList();
+    document.getElementById('folder-modal-overlay').classList.remove('hidden');
+  });
+  document.getElementById('folder-modal-close').addEventListener('click', () => {
+    document.getElementById('folder-modal-overlay').classList.add('hidden');
+  });
+  document.getElementById('folder-modal-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'folder-modal-overlay') e.currentTarget.classList.add('hidden');
+  });
+  document.getElementById('btn-add-folder').addEventListener('click', () => {
+    const input = document.getElementById('new-folder-name');
+    const name = input.value.trim();
+    if (!name) return;
+    input.value = '';
+    const note = getCurrentNote();
+    if (note) {
+      note.settings.folder = name;
+      scheduleSave();
+      renderFolderSelectForCurrentNote();
+    }
+    activeFolder = name;
+    renderFolderManageList();
+    renderFolderChips();
+    renderNoteList();
+  });
+  document.getElementById('new-folder-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('btn-add-folder').click();
+  });
+
+  // ---- 에디터 ----
+  const editor = document.getElementById('editor');
+  editor.addEventListener('input', () => {
+    const note = getCurrentNote();
+    if (!note) return;
+    note.content = editor.value;
+    updateCount(); scheduleSave(); playTypeSound(); applyTypewriterScroll();
+  });
+  editor.addEventListener('click', applyTypewriterScroll);
+  editor.addEventListener('keyup', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) applyTypewriterScroll();
+  });
+
+  // ---- 제목 ----
+  document.getElementById('title-input').addEventListener('input', (e) => {
+    const note = getCurrentNote();
+    if (!note) return;
+    note.title = e.target.value;
+    scheduleSave(); renderNoteList();
+  });
+  document.getElementById('btn-date-title').addEventListener('click', () => {
+    const note = getCurrentNote();
+    if (!note) return;
+    const now = new Date();
+    const str = formatDateTime(now);
+    document.getElementById('title-input').value = str;
+    note.title = str;
+    scheduleSave(); renderNoteList();
+  });
+
+  // ---- 상단 버튼 ----
+  document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+  document.getElementById('btn-top-new').addEventListener('click', createNewNote);
+  document.getElementById('btn-top-delete').addEventListener('click', () => {
+    const note = getCurrentNote(); if (!note) return;
+    deleteNote(note.id);
+  });
+  document.getElementById('modal-close').addEventListener('click', () => document.getElementById('modal-overlay').classList.add('hidden'));
+  document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') e.currentTarget.classList.add('hidden'); });
+
+  // ---- 키보드 단축키 ----
+  document.addEventListener('keydown', (e) => {
+    const key = e.key.toLowerCase();
+
+    // 새 메모: Alt+N 사용 (Ctrl/Cmd+N은 브라우저가 "새 창"으로 선점하고 있어서 페이지에서 가로챌 수 없어요)
+    if (e.altKey && !e.ctrlKey && !e.metaKey && key === 'n') {
+      e.preventDefault();
+      createNewNote();
+      return;
+    }
+
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+
+    if (key === 'q') { // 설정창 열기/닫기
+      e.preventDefault();
+      const modal = document.getElementById('modal-overlay');
+      if (modal.classList.contains('hidden')) openSettingsModal();
+      else modal.classList.add('hidden');
+    } else if (key === 'k') { // 검색창 포커스
+      e.preventDefault();
+      const sb = document.getElementById('sidebar');
+      if (sb.classList.contains('collapsed')) document.getElementById('btn-sidebar-toggle').click();
+      document.getElementById('sidebar-search').focus();
+    } else if (key === 's') { // 즉시 저장
+      e.preventDefault();
+      clearTimeout(saveTimer);
+      doSave();
+    } else if (key === 'b') { // 사이드바 접기/펼치기
+      e.preventDefault();
+      document.getElementById('btn-sidebar-toggle').click();
+    } else if (key === 'e') { // 텍스트로 내보내기
+      e.preventDefault();
+      document.getElementById('btn-export').click();
+    }
+  });
+
+  document.getElementById('btn-export').addEventListener('click', () => {
+    const note = getCurrentNote();
+    if (!note) return;
+    const blob = new Blob([editor.value], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${displayTitle(note)}.txt`;
+    a.click();
+  });
+
+  // ---- 설정: 목표 글자수 ----
+  document.getElementById('goal-enabled').addEventListener('change', (e) => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.goalEnabled = e.target.checked;
+    updateCount(); scheduleSave();
+  });
+  document.getElementById('goal-input').addEventListener('input', (e) => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.goal = Number(e.target.value) || 1;
+    updateCount(); scheduleSave();
+  });
+
+  // ---- 설정: 배경 ----
+  ['bg-color-1', 'bg-color-2'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      const note = getCurrentNote(); if (!note) return;
+      note.settings.bgColor1 = document.getElementById('bg-color-1').value;
+      note.settings.bgColor2 = document.getElementById('bg-color-2').value;
+      applyNoteStyles(note); scheduleSave();
+    });
+  });
+  document.getElementById('bg-file-input').addEventListener('change', (e) => {
+    if (e.target.files[0]) handleImageFile(e.target.files[0]);
+  });
+  document.getElementById('btn-apply-bg-url').addEventListener('click', () => {
+    const url = document.getElementById('bg-url-input').value.trim();
+    if (!url) return;
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.bgImage = url; applyNoteStyles(note); scheduleSave();
+  });
+  document.getElementById('btn-clear-image').addEventListener('click', () => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.bgImage = ''; document.getElementById('bg-url-input').value = '';
+    applyNoteStyles(note); scheduleSave();
+  });
+
+  // ---- 설정: 폰트 ----
+  fontSelectC = new CustomSelect(document.getElementById('font-select'));
+  fontSelectC.onChange = (val) => {
+    if (val === '-1') return;
+    const note = getCurrentNote(); if (!note) return;
+    const p = fontPresets[Number(val)];
+    note.settings.fontName = p.name; note.settings.fontUrl = p.url;
+    applyNoteStyles(note); updateFontPreview(); scheduleSave();
+  };
+  document.getElementById('font-size-input').addEventListener('input', (e) => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.fontSize = Number(e.target.value) || 20;
+    applyNoteStyles(note); updateFontPreview(); scheduleSave();
+  });
+  document.getElementById('toggle-favs').addEventListener('click', () => {
+    const body = document.getElementById('favs-body');
+    const hidden = body.classList.toggle('hidden');
+    document.getElementById('toggle-favs').innerText = '폰트 즐겨찾기 관리 ' + (hidden ? '▸' : '▾');
+  });
+  document.getElementById('toggle-bg-image').addEventListener('click', () => {
+    const body = document.getElementById('bg-image-body');
+    const hidden = body.classList.toggle('hidden');
+    document.getElementById('toggle-bg-image').innerText = '배경 이미지 설정 ' + (hidden ? '▸' : '▾');
+  });
+  document.getElementById('btn-add-preset').addEventListener('click', () => {
+    const name = document.getElementById('new-font-name').value.trim();
+    const url = document.getElementById('new-font-url').value.trim();
+    if (!name) { alert('폰트 이름을 입력해주세요.'); return; }
+    if (fontPresets.some(p => p.name === name)) { alert('이미 있는 이름이에요.'); return; }
+    fontPresets.push({ name, url });
+    saveFontPresets(fontPresets);
+    document.getElementById('new-font-name').value = ''; document.getElementById('new-font-url').value = '';
+    renderPresetList(); renderFontSelect();
+  });
+
+  // ---- 설정: 타이핑 소리 ----
+  document.getElementById('sound-enabled').addEventListener('change', (e) => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.soundEnabled = e.target.checked; scheduleSave();
+  });
+  soundTypeC = new CustomSelect(document.getElementById('sound-type'));
+  soundTypeC.setOptions([
+    { value: 'mechanical', label: '기계식 (또각또각)' },
+    { value: 'soft', label: '부드러운 (톡톡)' },
+    { value: 'typewriter', label: '타자기 (철컥철컥)' }
+  ]);
+  soundTypeC.onChange = (val) => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.soundType = val; scheduleSave();
+  };
+  document.getElementById('btn-sound-test').addEventListener('click', () => {
+    const note = getCurrentNote(); if (!note) return;
+    const was = note.settings.soundEnabled;
+    note.settings.soundEnabled = true;
+    playTypeSound();
+    note.settings.soundEnabled = was;
+  });
+
+  // ---- 설정: 타자기 스크롤 ----
+  document.getElementById('typewriter-scroll').addEventListener('change', (e) => {
+    const note = getCurrentNote(); if (!note) return;
+    note.settings.typewriterScroll = e.target.checked; scheduleSave();
+  });
+
+  // ---- 설정: 새 메모 기본값 ----
+  document.getElementById('use-last-as-default').addEventListener('change', (e) => {
+    creationDefaults.useLastAsDefault = e.target.checked;
+    persistCreationDefaultsToServer();
+  });
+  document.getElementById('btn-save-as-default').addEventListener('click', () => {
+    const note = getCurrentNote(); if (!note) return;
+    creationDefaults.savedDefaults = JSON.parse(JSON.stringify(note.settings));
+    persistCreationDefaultsToServer();
+    const hint = document.getElementById('default-saved-hint');
+    hint.innerText = '저장했어요. 새 메모가 이제 이 설정으로 시작해요.';
+    clearTimeout(hint._t);
+    hint._t = setTimeout(() => { hint.innerText = ''; }, 3000);
+  });
+
+  // ---- 설정: 메모 삭제 ----
+  document.getElementById('btn-delete-note').addEventListener('click', () => {
+    const note = getCurrentNote(); if (!note) return;
+    document.getElementById('modal-overlay').classList.add('hidden');
+    deleteNote(note.id);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
