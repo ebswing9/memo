@@ -679,6 +679,9 @@
       </label>
       <button class="btn" style="margin-top:14px; width:100%;" id="btn-save-as-default" type="button">지금 이 설정을 기본값으로 저장</button>
       <div id="default-saved-hint" style="font-size:11px; color: var(--text-muted); margin-top:8px; min-height:14px;"></div>
+      <label class="field-label">기본 폴더</label>
+      <div id="default-folder-select"></div>
+      <div class="modal-sub" style="margin-top:6px;">폴더를 따로 지정하지 않은 새 메모는 여기서 고른 폴더로 시작해요.</div>
     </div>
 
     <div class="settings-section">
@@ -716,7 +719,7 @@ let password = localStorage.getItem(PW_KEY) || '';
 // GitHub Pages로 옮기실 때: 아래 GAS_WEBAPP_URL에 배포된 Apps Script 웹앱 주소
 // (.../exec로 끝나는 그 주소)를 붙여넣기만 하면 나머지는 자동으로 전환돼요.
 // ============================================================
-const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyiGa-o6x2gmeNnDq8Wgmit3Bo67mhk-WxlRQ1ngV2DA9lh2mH8SznFKOKH7DcnZ_kD3w/exec'
+const GAS_WEBAPP_URL = ''; // 예: 'https://script.google.com/macros/s/AKfycb.../exec'
 
 function callGasRun(action, params) {
   return new Promise((resolve, reject) => {
@@ -734,10 +737,27 @@ function callGasRun(action, params) {
 }
 
 function callGasFetch(action, params) {
+  const shortActions = ['auth', 'list', 'delete', 'getDefaults'];
+  const query = '?action=' + encodeURIComponent(action)
+    + (params.pw ? '&pw=' + encodeURIComponent(params.pw) : '')
+    + (params.id ? '&id=' + encodeURIComponent(params.id) : '');
+
+  if (shortActions.indexOf(action) !== -1) {
+    // 내용이 짧은 요청은 GET으로 보냅니다. Apps Script 웹앱은 종종 내부적으로
+    // 리다이렉트를 거치는데, 그 과정에서 POST 본문이 유실될 수 있는 반면
+    // 쿼리스트링은 리다이렉트에도 그대로 유지되어 더 안전합니다.
+    return fetch(GAS_WEBAPP_URL + query, { method: 'GET' }).then(r => {
+      if (!r.ok) throw new Error('서버 응답 오류 (HTTP ' + r.status + ')');
+      return r.json();
+    });
+  }
+
+  // 내용이 길어질 수 있는 요청(save, setDefaults)은 POST 본문에 담되,
+  // 라우팅에 필요한 action/pw는 쿼리스트링에도 함께 넣어 이중 안전장치를 둡니다.
   // Content-Type을 text/plain으로 보내는 건 일부러예요 — application/json으로 보내면
   // 브라우저가 CORS 프리플라이트(OPTIONS) 요청을 먼저 보내는데, Apps Script 웹앱은
   // 이 프리플라이트 요청에 응답하지 않아서 요청 자체가 실패해요.
-  return fetch(GAS_WEBAPP_URL, {
+  return fetch(GAS_WEBAPP_URL + query, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(Object.assign({ action: action }, params))
@@ -754,6 +774,9 @@ function callApi(action, params) {
 let notes = [];          // 서버에서 불러온 전체 메모 목록 (휴지통 제외)
 let trashedNotes = [];   // 휴지통에 있는 메모 목록
 let sidebarView = 'notes'; // 'notes' | 'trash'
+let hoveredNoteId = null; // 사이드바에서 마우스를 올리고 있는 메모 (Delete 키로 바로 삭제하기 위함)
+let editorDirty = false; // 마지막으로 불러온(또는 저장된) 내용 이후로 사용자가 뭔가 입력했는지
+const NOTES_CACHE_KEY = 'notesapp_notes_cache';
 let currentId = null;    // 현재 열려 있는 메모(로컬 임시 id 포함)
 let saveTimer = null;
 let isNewDraft = false;  // 아직 서버에 저장 안 된 새 메모인지
@@ -765,12 +788,13 @@ function closeMobileSidebar() {
   document.getElementById('sidebar-backdrop').classList.remove('show');
 }
 
-// 새 메모를 만들 때 어떤 설정으로 시작할지 (기기 간 동기화됨)
+// 새 메모를 만들 때 어떤 설정으로 시작할지, 그리고 폴더 목록도 (기기 간 동기화됨)
+const DEFAULT_CREATION_DEFAULTS = { useLastAsDefault: false, savedDefaults: null, lastUsedSettings: null, defaultFolder: '', folders: [] };
 function loadCreationDefaultsCache() {
   try {
     const raw = localStorage.getItem(DEFAULTS_CACHE_KEY);
-    return raw ? JSON.parse(raw) : { useLastAsDefault: false, savedDefaults: null };
-  } catch (e) { return { useLastAsDefault: false, savedDefaults: null }; }
+    return raw ? Object.assign({}, DEFAULT_CREATION_DEFAULTS, JSON.parse(raw)) : Object.assign({}, DEFAULT_CREATION_DEFAULTS);
+  } catch (e) { return Object.assign({}, DEFAULT_CREATION_DEFAULTS); }
 }
 function saveCreationDefaultsCache() { localStorage.setItem(DEFAULTS_CACHE_KEY, JSON.stringify(creationDefaults)); }
 let creationDefaults = loadCreationDefaultsCache();
@@ -779,8 +803,10 @@ function loadCreationDefaultsFromServer() {
   callApi('getDefaults', { pw: password })
     .then(res => {
       if (res && res.ok && res.defaults) {
-        creationDefaults = Object.assign({ useLastAsDefault: false, savedDefaults: null }, res.defaults);
+        creationDefaults = Object.assign({}, DEFAULT_CREATION_DEFAULTS, res.defaults);
         saveCreationDefaultsCache();
+        renderFolderChips();
+        renderFolderSelectForCurrentNote();
       }
     })
     .catch(() => {});
@@ -789,20 +815,53 @@ function persistCreationDefaultsToServer() {
   saveCreationDefaultsCache();
   callApi('setDefaults', { pw: password, settings: creationDefaults }).catch(() => {});
 }
+// 폴더 목록은 메모에 실제로 붙어있는지와 상관없이 별도로 저장해서,
+// 마지막 메모가 지워져도 폴더 자체는 안 사라지게 합니다.
+function registerFolderName(name) {
+  if (!name) return;
+  if (!creationDefaults.folders.includes(name)) {
+    creationDefaults.folders.push(name);
+    persistCreationDefaultsToServer();
+  }
+}
+function unregisterFolderName(name) {
+  creationDefaults.folders = creationDefaults.folders.filter(f => f !== name);
+  if (creationDefaults.defaultFolder === name) creationDefaults.defaultFolder = '';
+  persistCreationDefaultsToServer();
+}
+function renameFolderName(oldName, newName) {
+  creationDefaults.folders = creationDefaults.folders.filter(f => f !== oldName);
+  if (!creationDefaults.folders.includes(newName)) creationDefaults.folders.push(newName);
+  if (creationDefaults.defaultFolder === oldName) creationDefaults.defaultFolder = newName;
+  persistCreationDefaultsToServer();
+}
+
 function rememberLastUsedSettings(settings) {
   try { localStorage.setItem(LAST_SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+  if (!creationDefaults.useLastAsDefault) return;
+  const serialized = JSON.stringify(settings);
+  if (serialized === creationDefaults._lastSyncedSettings) return; // 실제로 바뀐 게 없으면 서버에 또 보내지 않음
+  creationDefaults._lastSyncedSettings = serialized;
+  creationDefaults.lastUsedSettings = settings;
+  persistCreationDefaultsToServer();
 }
 function loadLastUsedSettings() {
   try { const raw = localStorage.getItem(LAST_SETTINGS_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
 }
 function getInitialSettingsForNewNote() {
   const base = defaultSettings();
+  let result = base;
   if (creationDefaults.useLastAsDefault) {
-    const last = loadLastUsedSettings();
-    if (last) return Object.assign({}, base, last);
+    const last = creationDefaults.lastUsedSettings || loadLastUsedSettings();
+    if (last) result = Object.assign({}, base, last);
+  } else if (creationDefaults.savedDefaults) {
+    result = Object.assign({}, base, creationDefaults.savedDefaults);
   }
-  if (creationDefaults.savedDefaults) return Object.assign({}, base, creationDefaults.savedDefaults);
-  return base;
+  // 기본 폴더가 지정되어 있으면, 위에서 뭘 골랐든 폴더만은 항상 기본 폴더를 따르게 합니다.
+  if (creationDefaults.defaultFolder) {
+    result = Object.assign({}, result, { folder: creationDefaults.defaultFolder });
+  }
+  return result;
 }
 
 // ---- 에러 토스트 ----
@@ -930,7 +989,7 @@ function showChoice(message, choices, onChoose) {
   document.getElementById('confirm-overlay').classList.remove('hidden');
 }
 
-let fontSelectC, soundTypeC, folderSelectC;
+let fontSelectC, soundTypeC, folderSelectC, defaultFolderSelectC;
 
 function showToast(msg) {
   let toast = document.getElementById('app-toast');
@@ -987,20 +1046,28 @@ function showGateError(msg) { document.getElementById('gate-error').innerText = 
 function tryEnter(pw, isAuto) {
   callApi('auth', { pw: pw })
     .then(res => {
+      if (!res) {
+        if (!isAuto) showGateError('서버 응답을 받지 못했어요. 다시 시도해주세요.');
+        return;
+      }
       if (res.ok) {
         password = pw;
         localStorage.setItem(PW_KEY, pw);
         document.getElementById('gate-overlay').classList.add('hidden');
         document.getElementById('app').classList.remove('hidden');
+        bootFromCache();
         loadCreationDefaultsFromServer();
         loadNotes();
       } else {
-        if (!isAuto) showGateError('비밀번호가 올바르지 않아요.');
+        // res.error가 'AUTH'(단순 비밀번호 불일치)가 아니라면 실제 원인을 그대로 보여줍니다.
+        const detail = (res.error && res.error !== 'AUTH') ? (' (' + res.error + ')') : '';
+        if (!isAuto) showGateError('비밀번호가 올바르지 않아요.' + detail);
         else document.getElementById('gate-overlay').classList.remove('hidden');
       }
     })
     .catch(err => {
-      showGateError('연결에 문제가 있어요: ' + err.message);
+      if (!isAuto) showGateError('연결에 문제가 있어요: ' + err.message);
+      else document.getElementById('gate-overlay').classList.remove('hidden');
     });
 }
 
@@ -1033,12 +1100,22 @@ function loadNotes(isRetry) {
         trashedNotes = all.filter(n => n.settings && n.settings.deletedAt)
           .sort((a, b) => ((b.settings.deletedAt) || '').localeCompare((a.settings.deletedAt) || ''));
         document.getElementById('debug-footer').innerText = '메모 ' + notes.length + '개';
+        cacheNotesLocally();
         renderFolderChips();
-        renderNoteList();
-        if (notes.length > 0) {
+
+        // 캐시로 미리 화면을 그려둔 상태였다면(부팅 캐시), 그 사이 사용자가 뭔가 입력했을 수 있으니
+        // 에디터 내용은 함부로 덮어쓰지 않고, 그렇지 않다면 최신 내용으로 안전하게 갱신합니다.
+        const freshCurrent = currentId ? notes.find(n => n.id === currentId) : null;
+        if (freshCurrent && editorDirty) {
+          renderNoteList();
+        } else if (freshCurrent) {
+          selectNote(freshCurrent.id);
+        } else if (notes.length > 0) {
           selectNote(notes[0].id);
-        } else {
+        } else if (!currentId) {
           createNewNote();
+        } else {
+          renderNoteList();
         }
       } catch (err) {
         showToast('화면을 그리는 중 오류가 발생했어요: ' + err.message);
@@ -1048,6 +1125,27 @@ function loadNotes(isRetry) {
     .catch(err => {
       showToast('서버 연결에 문제가 있어요: ' + err.message);
     });
+}
+
+// 마지막으로 불러온 메모 목록을 기기에 저장해뒀다가, 다음에 열 때 즉시 화면에 먼저 보여주기 위함
+// (실제 최신 데이터는 뒤에서 조용히 다시 불러와서 반영해요)
+function cacheNotesLocally() {
+  try {
+    localStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(notes.slice(0, 200)));
+  } catch (e) {}
+}
+function bootFromCache() {
+  try {
+    const raw = localStorage.getItem(NOTES_CACHE_KEY);
+    if (!raw) return;
+    const cached = JSON.parse(raw);
+    if (!Array.isArray(cached) || cached.length === 0) return;
+    notes = cached;
+    renderFolderChips();
+    renderNoteList();
+    selectNote(notes[0].id);
+    document.getElementById('debug-footer').innerText = '메모 ' + notes.length + '개 (저장된 사본 · 최신 내용 불러오는 중...)';
+  } catch (e) {}
 }
 
 // 충돌 해소 등에서, 목록 전체를 다시 불러오지 않고 메모 하나만 최신 내용으로 갱신합니다.
@@ -1089,7 +1187,7 @@ function displayTitle(note) {
 function getNoteFolder(n) { return (n.settings && n.settings.folder) || ''; }
 
 function getAllFolders() {
-  const set = new Set();
+  const set = new Set(creationDefaults.folders || []);
   notes.forEach(n => { const f = getNoteFolder(n); if (f) set.add(f); });
   return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
 }
@@ -1119,6 +1217,7 @@ function renderFolderChips() {
   addChip.innerText = '+';
   addChip.addEventListener('click', () => {
     showPrompt('새 폴더 이름을 입력하세요', '', (name) => {
+      registerFolderName(name);
       const note = getCurrentNote();
       if (note) {
         note.settings.folder = name;
@@ -1182,6 +1281,8 @@ function renderNoteList() {
       e.stopPropagation();
       deleteNote(n.id);
     });
+    item.addEventListener('mouseenter', () => { hoveredNoteId = n.id; });
+    item.addEventListener('mouseleave', () => { if (hoveredNoteId === n.id) hoveredNoteId = null; });
     wrap.appendChild(item);
   });
 }
@@ -1253,31 +1354,24 @@ function deleteNote(id) {
   const note = notes.find(n => n.id === id);
   if (!note) return;
   const isLocalOnly = id.toString().startsWith('local_');
+  const wasCurrent = id === currentId;
+  notes = notes.filter(n => n.id !== id);
 
-  showConfirm(
-    isLocalOnly ? '이 메모를 삭제할까요?' : '이 메모를 휴지통으로 옮길까요? 30일 후 자동으로 완전히 삭제돼요.',
-    () => {
-      const wasCurrent = id === currentId;
-      notes = notes.filter(n => n.id !== id);
+  const afterMove = () => {
+    renderFolderChips();
+    renderNoteList();
+    if (wasCurrent) {
+      if (notes.length > 0) selectNote(notes[0].id);
+      else createNewNote();
+    }
+  };
 
-      const afterMove = () => {
-        renderFolderChips();
-        renderNoteList();
-        if (wasCurrent) {
-          if (notes.length > 0) selectNote(notes[0].id);
-          else createNewNote();
-        }
-      };
+  if (isLocalOnly) { afterMove(); return; }
 
-      if (isLocalOnly) { afterMove(); return; }
-
-      note.settings = note.settings || {};
-      note.settings.deletedAt = new Date().toISOString();
-      trashedNotes.unshift(note);
-      saveNoteToServer(note, () => afterMove());
-    },
-    { danger: !isLocalOnly, okLabel: isLocalOnly ? '삭제' : '휴지통으로' }
-  );
+  note.settings = note.settings || {};
+  note.settings.deletedAt = new Date().toISOString();
+  trashedNotes.unshift(note);
+  saveNoteToServer(note, () => afterMove());
 }
 
 function restoreNote(id) {
@@ -1311,7 +1405,18 @@ function scheduleSave() {
   saveTimer = setTimeout(doSave, 1200);
 }
 
+// 같은 메모에 대해 저장 요청이 겹쳐서 나가지 않도록 큐를 둡니다.
+// (겹쳐서 나가면, 나중 요청이 들고 있는 "마지막으로 알던 저장 시각"이 낡아서
+//  방금 다른 요청이 막 갱신한 시각과 어긋나 스스로와 충돌하는 것처럼 보일 수 있어요)
 function saveNoteToServer(note, onDone) {
+  if (note._saveInFlight) {
+    note._savePending = true;
+    note._pendingCallbacks = note._pendingCallbacks || [];
+    if (onDone) note._pendingCallbacks.push(onDone);
+    return;
+  }
+  note._saveInFlight = true;
+
   const wasLocal = note.id.toString().startsWith('local_');
   const payload = {
     id: wasLocal ? null : note.id,
@@ -1322,21 +1427,38 @@ function saveNoteToServer(note, onDone) {
   };
   callApi('save', { pw: password, note: payload })
     .then(res => {
-      if (!res) { showToast('저장 응답을 받지 못했어요. 다시 시도해주세요.'); if (onDone) onDone(false); return; }
+      note._saveInFlight = false;
+      const finish = (ok) => {
+        if (onDone) onDone(ok);
+        if (note._savePending) {
+          note._savePending = false;
+          const callbacks = note._pendingCallbacks || [];
+          note._pendingCallbacks = [];
+          saveNoteToServer(note, (ok2) => callbacks.forEach(cb => cb(ok2)));
+        }
+      };
+      if (!res) { showToast('저장 응답을 받지 못했어요. 다시 시도해주세요.'); finish(false); return; }
       if (res.conflict) {
-        if (onDone) onDone(false);
+        finish(false);
         handleSaveConflict(note);
         return;
       }
-      if (!res.ok) { showToast('저장에 실패했어요: ' + (res.error || '알 수 없는 오류')); if (onDone) onDone(false); return; }
+      if (!res.ok) { showToast('저장에 실패했어요: ' + (res.error || '알 수 없는 오류')); finish(false); return; }
       note.id = res.id;
       note.createdAt = res.createdAt;
       note.updatedAt = res.updatedAt;
-      if (onDone) onDone(true);
+      finish(true);
     })
     .catch(err => {
+      note._saveInFlight = false;
       showToast('저장 중 연결 오류: ' + err.message);
       if (onDone) onDone(false);
+      if (note._savePending) {
+        note._savePending = false;
+        const callbacks = note._pendingCallbacks || [];
+        note._pendingCallbacks = [];
+        saveNoteToServer(note, (ok2) => callbacks.forEach(cb => cb(ok2)));
+      }
     });
 }
 
@@ -1382,8 +1504,10 @@ function doSave() {
   saveNoteToServer(note, (ok) => {
     if (!ok) return;
     if (wasNewDraft) { currentId = note.id; isNewDraft = false; }
+    editorDirty = false;
     showSaveDot();
     renderNoteList();
+    cacheNotesLocally();
   });
 }
 
@@ -1678,6 +1802,10 @@ function openSettingsModal() {
   document.getElementById('typewriter-scroll').checked = s.typewriterScroll;
   document.getElementById('use-last-as-default').checked = !!creationDefaults.useLastAsDefault;
   document.getElementById('default-saved-hint').innerText = '';
+  defaultFolderSelectC.setOptions(
+    [{ value: '', label: '지정 안 함' }].concat(getAllFolders().map(f => ({ value: f, label: f })))
+  );
+  defaultFolderSelectC.setValue(creationDefaults.defaultFolder || '');
   renderFontSelect(); renderPresetList(); updateFontPreview();
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
@@ -1725,6 +1853,7 @@ function init() {
     if (!note) return;
     if (val === '__new__') {
       showPrompt('새 폴더 이름을 입력하세요', '', (name) => {
+        registerFolderName(name);
         note.settings.folder = name;
         scheduleSave();
         renderFolderSelectForCurrentNote();
@@ -1780,6 +1909,7 @@ function init() {
       row.querySelector('.fm-rename').addEventListener('click', () => {
         showPrompt('새 폴더 이름을 입력하세요', f, (newName) => {
           if (newName === f) return;
+          renameFolderName(f, newName);
           const affected = notes.concat(trashedNotes).filter(n => getNoteFolder(n) === f);
           affected.forEach(n => { n.settings.folder = newName; saveNoteToServer(n, () => {}); });
           if (activeFolder === f) activeFolder = newName;
@@ -1793,6 +1923,7 @@ function init() {
         showConfirm(
           `"${f}" 폴더를 삭제할까요? 이 폴더에 있던 메모는 삭제되지 않고, 폴더 지정만 없어져요.`,
           () => {
+            unregisterFolderName(f);
             const affected = notes.concat(trashedNotes).filter(n => getNoteFolder(n) === f);
             affected.forEach(n => { n.settings.folder = ''; saveNoteToServer(n, () => {}); });
             if (activeFolder === f) activeFolder = '__all__';
@@ -1822,16 +1953,10 @@ function init() {
     const name = input.value.trim();
     if (!name) return;
     input.value = '';
-    const note = getCurrentNote();
-    if (note) {
-      note.settings.folder = name;
-      scheduleSave();
-      renderFolderSelectForCurrentNote();
-    }
-    activeFolder = name;
+    registerFolderName(name);
     renderFolderManageList();
     renderFolderChips();
-    renderNoteList();
+    renderFolderSelectForCurrentNote();
   });
   document.getElementById('new-folder-name').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('btn-add-folder').click();
@@ -1843,6 +1968,7 @@ function init() {
     const note = getCurrentNote();
     if (!note) return;
     note.content = editor.value;
+    editorDirty = true;
     updateCount(); scheduleSave(); playTypeSound(); applyTypewriterScroll();
   });
   editor.addEventListener('click', applyTypewriterScroll);
@@ -1855,6 +1981,7 @@ function init() {
     const note = getCurrentNote();
     if (!note) return;
     note.title = e.target.value;
+    editorDirty = true;
     scheduleSave(); renderNoteList();
   });
   document.getElementById('btn-date-title').addEventListener('click', () => {
@@ -1880,6 +2007,18 @@ function init() {
   // ---- 키보드 단축키 ----
   document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
+
+    // 사이드바에서 메모 위에 마우스를 올려둔 상태로 Delete 키 → 그 메모 바로 삭제(휴지통으로)
+    // 입력창/에디터에 포커스가 가 있을 때는 무시해서, 타이핑 중 실수로 지워지는 걸 막습니다.
+    if (e.key === 'Delete' && hoveredNoteId && sidebarView === 'notes') {
+      const active = document.activeElement;
+      const isTyping = active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT');
+      if (!isTyping) {
+        e.preventDefault();
+        deleteNote(hoveredNoteId);
+        return;
+      }
+    }
 
     // 새 메모: Alt+N 사용 (Ctrl/Cmd+N은 브라우저가 "새 창"으로 선점하고 있어서 페이지에서 가로챌 수 없어요)
     if (e.altKey && !e.ctrlKey && !e.metaKey && key === 'n') {
@@ -2038,6 +2177,11 @@ function init() {
     clearTimeout(hint._t);
     hint._t = setTimeout(() => { hint.innerText = ''; }, 3000);
   });
+  defaultFolderSelectC = new CustomSelect(document.getElementById('default-folder-select'));
+  defaultFolderSelectC.onChange = (val) => {
+    creationDefaults.defaultFolder = val;
+    persistCreationDefaultsToServer();
+  };
 
   // ---- 설정: 메모 삭제 ----
   document.getElementById('btn-delete-note').addEventListener('click', () => {
