@@ -693,6 +693,12 @@
   </div>
 </div>
 
+<!--
+  config.js: GitHub Pages 등 정적 호스팅용 설정 파일 (GAS_WEBAPP_URL을 여기서 정의).
+  Apps Script가 직접 이 페이지를 서비스하는 경우엔 이 파일이 없어서 404가 나는데,
+  그건 정상이에요 — 아래 스크립트가 이 경우를 감지해서 자동으로 예전 방식으로 동작해요.
+-->
+<script src="config.js"></script>
 <script>
 // ============================================================
 // 전역 상태
@@ -708,18 +714,12 @@ let password = localStorage.getItem(PW_KEY) || '';
 // ============================================================
 // API 호출 계층
 // ------------------------------------------------------------
-// GAS_WEBAPP_URL이 비어있으면: 지금처럼 이 페이지가 Apps Script(HtmlService)에
-//   직접 얹혀서 서비스되는 상태로 보고, google.script.run을 사용합니다.
-// GAS_WEBAPP_URL을 채워두면: 이 페이지는 GitHub Pages 등 다른 곳에서 정적으로
-//   서비스되고, Apps Script는 순수 API 서버로만 fetch()를 통해 호출합니다.
-//   (이렇게 하면 Apps Script가 강제로 붙이는 "Google Apps Script 사용자가
-//   만들었습니다" 배너가 화면에 뜨지 않습니다 — 그 배너는 Apps Script가 직접
-//   HTML 페이지를 서비스할 때만 붙기 때문입니다.)
-//
-// GitHub Pages로 옮기실 때: 아래 GAS_WEBAPP_URL에 배포된 Apps Script 웹앱 주소
-// (.../exec로 끝나는 그 주소)를 붙여넣기만 하면 나머지는 자동으로 전환돼요.
+// 이제 Apps Script는 화면을 서비스하지 않고 순수 API 서버(구글 시트 데이터베이스)
+// 역할만 해요. 그래서 config.js의 GAS_WEBAPP_URL이 항상 채워져 있어야 해요.
+// (혹시라도 비어있으면 예전 google.script.run 방식으로 자동 대체되지만,
+// 지금 구조에서는 그 경로가 쓰일 일이 없어요 — 안전장치로만 남겨둡니다.)
 // ============================================================
-const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyiGa-o6x2gmeNnDq8Wgmit3Bo67mhk-WxlRQ1ngV2DA9lh2mH8SznFKOKH7DcnZ_kD3w/exec'; // 예: 'https://script.google.com/macros/s/AKfycb.../exec'
+const RESOLVED_GAS_WEBAPP_URL = (typeof GAS_WEBAPP_URL !== 'undefined' && GAS_WEBAPP_URL) ? GAS_WEBAPP_URL : '';
 
 function callGasRun(action, params) {
   return new Promise((resolve, reject) => {
@@ -746,7 +746,7 @@ function callGasFetch(action, params) {
     // 내용이 짧은 요청은 GET으로 보냅니다. Apps Script 웹앱은 종종 내부적으로
     // 리다이렉트를 거치는데, 그 과정에서 POST 본문이 유실될 수 있는 반면
     // 쿼리스트링은 리다이렉트에도 그대로 유지되어 더 안전합니다.
-    return fetch(GAS_WEBAPP_URL + query, { method: 'GET' }).then(r => {
+    return fetch(RESOLVED_GAS_WEBAPP_URL + query, { method: 'GET' }).then(r => {
       if (!r.ok) throw new Error('서버 응답 오류 (HTTP ' + r.status + ')');
       return r.json();
     });
@@ -757,7 +757,7 @@ function callGasFetch(action, params) {
   // Content-Type을 text/plain으로 보내는 건 일부러예요 — application/json으로 보내면
   // 브라우저가 CORS 프리플라이트(OPTIONS) 요청을 먼저 보내는데, Apps Script 웹앱은
   // 이 프리플라이트 요청에 응답하지 않아서 요청 자체가 실패해요.
-  return fetch(GAS_WEBAPP_URL + query, {
+  return fetch(RESOLVED_GAS_WEBAPP_URL + query, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(Object.assign({ action: action }, params))
@@ -769,7 +769,7 @@ function callGasFetch(action, params) {
 
 function callApi(action, params) {
   params = params || {};
-  return GAS_WEBAPP_URL ? callGasFetch(action, params) : callGasRun(action, params);
+  return RESOLVED_GAS_WEBAPP_URL ? callGasFetch(action, params) : callGasRun(action, params);
 }
 let notes = [];          // 서버에서 불러온 전체 메모 목록 (휴지통 제외)
 let trashedNotes = [];   // 휴지통에 있는 메모 목록
@@ -1814,6 +1814,10 @@ function openSettingsModal() {
 // 초기화
 // ============================================================
 function init() {
+  if (!RESOLVED_GAS_WEBAPP_URL) {
+    showGateError('config.js에 GAS_WEBAPP_URL이 설정되지 않았어요. config.js 파일을 확인해주세요.');
+  }
+
   // ---- 비밀번호 게이트 ----
   document.getElementById('btn-gate-submit').addEventListener('click', () => {
     tryEnter(document.getElementById('gate-pw').value, false);
