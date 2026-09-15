@@ -191,6 +191,7 @@
     transition: background .18s var(--ease), color .18s var(--ease);
   }
   .top-btn:hover { background: color-mix(in srgb, var(--editor-text) 8%, transparent); color: var(--editor-text); }
+  .top-btn.saving { color: var(--accent); }
 
   #title-input {
     flex: 1; min-width: 60px; border: none; background: transparent; outline: none;
@@ -542,6 +543,9 @@
       <div id="progress-bar-bg"><div id="progress-bar-fill"></div></div>
       <div id="char-count"><span id="char-count-text">0자</span><span id="save-dot" title="저장됨"></span></div>
       <div id="icon-btn-group">
+        <button class="top-btn" id="btn-manual-save" title="지금 저장 (Ctrl/Cmd+S)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>
+        </button>
         <button class="top-btn" id="btn-top-new" title="새 메모">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
         </button>
@@ -1074,6 +1078,27 @@ function tryEnter(pw, isAuto) {
 // ============================================================
 // 메모 목록 불러오기 / 렌더링
 // ============================================================
+// 서버에서 새로 받아온 목록을, 기존에 들고 있던 객체를 최대한 그대로 유지하면서 합칩니다.
+// (객체를 통째로 새로 갈아치우면, 그 사이 편집 중이던/저장 진행 중이던 메모의 참조가
+//  끊어져서 자동저장이 엉뚱한 객체를 상대하게 되는 문제가 생길 수 있어요)
+function mergeIntoExisting(oldArr, freshArr) {
+  const oldById = new Map(oldArr.map(n => [n.id, n]));
+  return freshArr.map(fresh => {
+    const existing = oldById.get(fresh.id);
+    if (!existing) return fresh;
+    // 지금 편집 중이거나 저장이 진행/대기 중인 메모는 필드를 덮어쓰지 않고 그대로 둡니다.
+    if (existing.id === currentId && (editorDirty || existing._saveInFlight || existing._savePending)) {
+      return existing;
+    }
+    existing.title = fresh.title;
+    existing.content = fresh.content;
+    existing.settings = fresh.settings;
+    existing.createdAt = fresh.createdAt;
+    existing.updatedAt = fresh.updatedAt;
+    return existing;
+  });
+}
+
 function loadNotes(isRetry) {
   callApi('list', { pw: password })
     .then(res => {
@@ -1095,21 +1120,22 @@ function loadNotes(isRetry) {
         }
         console.log('[memo] 지금 웹앱이 보고 있는 시트:', res.debug);
         const all = res.notes;
-        notes = all.filter(n => !(n.settings && n.settings.deletedAt))
+        const freshActive = all.filter(n => !(n.settings && n.settings.deletedAt))
           .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-        trashedNotes = all.filter(n => n.settings && n.settings.deletedAt)
+        const freshTrashed = all.filter(n => n.settings && n.settings.deletedAt)
           .sort((a, b) => ((b.settings.deletedAt) || '').localeCompare((a.settings.deletedAt) || ''));
+
+        notes = mergeIntoExisting(notes, freshActive);
+        trashedNotes = mergeIntoExisting(trashedNotes, freshTrashed);
+
         document.getElementById('debug-footer').innerText = '메모 ' + notes.length + '개';
         cacheNotesLocally();
         renderFolderChips();
 
-        // 캐시로 미리 화면을 그려둔 상태였다면(부팅 캐시), 그 사이 사용자가 뭔가 입력했을 수 있으니
-        // 에디터 내용은 함부로 덮어쓰지 않고, 그렇지 않다면 최신 내용으로 안전하게 갱신합니다.
-        const freshCurrent = currentId ? notes.find(n => n.id === currentId) : null;
-        if (freshCurrent && editorDirty) {
+        if (currentId && notes.some(n => n.id === currentId)) {
+          // 이미 보고 있는(부팅 캐시로 미리 열어둔 것 포함) 메모가 최신 목록에도 있다면
+          // 굳이 다시 선택하지 않고 목록만 새로고침 — 편집 중인 내용을 건드리지 않습니다.
           renderNoteList();
-        } else if (freshCurrent) {
-          selectNote(freshCurrent.id);
         } else if (notes.length > 0) {
           selectNote(notes[0].id);
         } else if (!currentId) {
@@ -1140,19 +1166,11 @@ function bootFromCache() {
     if (!raw) return;
     const cached = JSON.parse(raw);
     if (!Array.isArray(cached) || cached.length === 0) return;
-    const first = cached[0];
-
-    // 여기서는 순수하게 "미리보기"만 그려요 — notes/currentId 등 실제 상태와는
-    // 아직 연결하지 않습니다. 진짜 데이터가 도착하기 전까지는 편집(그리고 그로 인한
-    // 저장)을 아예 막아서, 캐시 객체와 실제 데이터 객체가 뒤섞여 저장 상태가
-    // 꼬이는 일(스스로와의 가짜 충돌)이 생기지 않도록 합니다.
-    document.getElementById('title-input').value = first.title || '';
-    document.getElementById('editor').value = first.content || '';
-    document.getElementById('editor').disabled = true;
-    const s = first.settings || defaultSettings();
-    document.documentElement.style.setProperty('--bg-1', s.bgColor1);
-    document.documentElement.style.setProperty('--bg-2', s.bgColor2);
-    document.getElementById('debug-footer').innerText = '메모 ' + cached.length + '개 (저장된 사본 · 최신 내용 불러오는 중...)';
+    notes = cached;
+    renderFolderChips();
+    renderNoteList();
+    selectNote(notes[0].id);
+    document.getElementById('debug-footer').innerText = '메모 ' + notes.length + '개 (저장된 사본 · 최신 내용 불러오는 중...)';
   } catch (e) {}
 }
 
@@ -1325,6 +1343,8 @@ function renderTrashListInto(wrap) {
 // 메모 선택 / 새 메모 / 삭제
 // ============================================================
 function selectNote(id) {
+  if (id === currentId) return; // 이미 보고 있는 메모면 아무것도 안 함
+  flushPendingSave(); // 떠나기 전에, 지금 메모에 대해 예약된 저장이 있으면 먼저 끝냅니다
   currentId = id;
   isNewDraft = false;
   const note = getCurrentNote();
@@ -1333,6 +1353,7 @@ function selectNote(id) {
   document.getElementById('editor').disabled = false;
   document.getElementById('title-input').value = note.title || '';
   document.getElementById('editor').value = note.content || '';
+  editorDirty = false;
   applyNoteStyles(note);
   updateCount();
   renderFolderSelectForCurrentNote();
@@ -1341,6 +1362,7 @@ function selectNote(id) {
 }
 
 function createNewNote() {
+  flushPendingSave(); // 떠나기 전에, 지금 메모에 대해 예약된 저장이 있으면 먼저 끝냅니다
   const localId = 'local_' + Date.now();
   const note = { id: localId, title: '', content: '', settings: getInitialSettingsForNewNote(), createdAt: '', updatedAt: '' };
   notes.unshift(note);
@@ -1350,6 +1372,7 @@ function createNewNote() {
   document.getElementById('editor').disabled = false;
   document.getElementById('title-input').value = '';
   document.getElementById('editor').value = '';
+  editorDirty = false;
   applyNoteStyles(note);
   updateCount();
   renderFolderSelectForCurrentNote();
@@ -1517,6 +1540,18 @@ function doSave() {
     renderNoteList();
     cacheNotesLocally();
   });
+}
+
+// 사용자가 직접 누르는 "지금 저장" — 대기 중인 자동저장 타이머를 기다리지 않고 바로 저장합니다.
+function manualSave() {
+  const note = getCurrentNote();
+  if (!note) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const btn = document.getElementById('btn-manual-save');
+  if (btn) btn.classList.add('saving');
+  doSave();
+  setTimeout(() => { if (btn) btn.classList.remove('saving'); }, 500);
 }
 
 // 타이핑 멈추고 1.2초 뒤 저장을 기다리다가, 탭을 나가거나 숨겨지면
@@ -2008,6 +2043,7 @@ function init() {
 
   // ---- 상단 버튼 ----
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+  document.getElementById('btn-manual-save').addEventListener('click', manualSave);
   document.getElementById('btn-top-new').addEventListener('click', createNewNote);
   document.getElementById('btn-top-delete').addEventListener('click', () => {
     const note = getCurrentNote(); if (!note) return;
@@ -2054,8 +2090,7 @@ function init() {
       document.getElementById('sidebar-search').focus();
     } else if (key === 's') { // 즉시 저장
       e.preventDefault();
-      clearTimeout(saveTimer);
-      doSave();
+      manualSave();
     } else if (key === 'b') { // 사이드바 접기/펼치기
       e.preventDefault();
       document.getElementById('btn-sidebar-toggle').click();
