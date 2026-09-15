@@ -1140,11 +1140,19 @@ function bootFromCache() {
     if (!raw) return;
     const cached = JSON.parse(raw);
     if (!Array.isArray(cached) || cached.length === 0) return;
-    notes = cached;
-    renderFolderChips();
-    renderNoteList();
-    selectNote(notes[0].id);
-    document.getElementById('debug-footer').innerText = '메모 ' + notes.length + '개 (저장된 사본 · 최신 내용 불러오는 중...)';
+    const first = cached[0];
+
+    // 여기서는 순수하게 "미리보기"만 그려요 — notes/currentId 등 실제 상태와는
+    // 아직 연결하지 않습니다. 진짜 데이터가 도착하기 전까지는 편집(그리고 그로 인한
+    // 저장)을 아예 막아서, 캐시 객체와 실제 데이터 객체가 뒤섞여 저장 상태가
+    // 꼬이는 일(스스로와의 가짜 충돌)이 생기지 않도록 합니다.
+    document.getElementById('title-input').value = first.title || '';
+    document.getElementById('editor').value = first.content || '';
+    document.getElementById('editor').disabled = true;
+    const s = first.settings || defaultSettings();
+    document.documentElement.style.setProperty('--bg-1', s.bgColor1);
+    document.documentElement.style.setProperty('--bg-2', s.bgColor2);
+    document.getElementById('debug-footer').innerText = '메모 ' + cached.length + '개 (저장된 사본 · 최신 내용 불러오는 중...)';
   } catch (e) {}
 }
 
