@@ -45,15 +45,42 @@
   body.has-image { background-image: var(--custom-bg-image, none); }
   .hidden { display: none !important; }
 
-  /* ---------- 커스텀 스크롤바 ---------- */
-  * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-muted) 35%, transparent) transparent; }
-  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  /* ---------- 커스텀 스크롤바 ----------
+     기본적으로 거의 안 보이게 숨겨두고, 마우스를 올리거나 스크롤할 때만
+     은은하게 나타나도록 합니다 (macOS 오버레이 스크롤바 느낌). */
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  *:hover { scrollbar-color: color-mix(in srgb, var(--text-muted) 30%, transparent) transparent; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--text-muted) 32%, transparent);
-    border-radius: 999px; border: 2px solid transparent; background-clip: padding-box;
+    background: transparent;
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    transition: background .25s var(--ease);
+    min-height: 40px;
   }
-  ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ui-accent) 60%, var(--text-muted) 20%); background-clip: padding-box; }
+  *:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-muted) 28%, transparent);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-muted) 55%, transparent) !important;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background: color-mix(in srgb, var(--text-muted) 70%, transparent) !important;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-corner { background: transparent; }
+
+  /* 글쓰기 영역은 특히 방해받지 않도록, 스크롤바가 배경에 더 녹아들게 */
+  #editor-wrap:hover::-webkit-scrollbar-thumb,
+  #editor:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--editor-text) 18%, transparent);
+    background-clip: padding-box;
+  }
 
   #btn-sidebar-close-mobile { display: none; }
 
@@ -740,6 +767,18 @@ function callGasRun(action, params) {
   });
 }
 
+function httpErrorMessage_(status) {
+  if (status === 404) {
+    return 'API 주소를 찾을 수 없어요 (404). config.js의 GAS_WEBAPP_URL이 .../exec 로 끝나는지, '
+      + '그리고 Code.gs를 고친 뒤 "배포 > 배포 관리 > 수정 > 새 버전 > 배포"로 재배포했는지 확인해주세요.';
+  }
+  if (status === 401 || status === 403) {
+    return '접근이 거부됐어요 (' + status + '). Apps Script 배포 설정에서 액세스 권한이 '
+      + '"링크가 있는 모든 사용자"로 되어 있는지 확인해주세요.';
+  }
+  return '서버 응답 오류 (HTTP ' + status + ')';
+}
+
 function callGasFetch(action, params) {
   const shortActions = ['auth', 'list', 'delete', 'getDefaults'];
   const query = '?action=' + encodeURIComponent(action)
@@ -751,7 +790,7 @@ function callGasFetch(action, params) {
     // 리다이렉트를 거치는데, 그 과정에서 POST 본문이 유실될 수 있는 반면
     // 쿼리스트링은 리다이렉트에도 그대로 유지되어 더 안전합니다.
     return fetch(RESOLVED_GAS_WEBAPP_URL + query, { method: 'GET' }).then(r => {
-      if (!r.ok) throw new Error('서버 응답 오류 (HTTP ' + r.status + ')');
+      if (!r.ok) throw new Error(httpErrorMessage_(r.status));
       return r.json();
     });
   }
@@ -766,7 +805,7 @@ function callGasFetch(action, params) {
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(Object.assign({ action: action }, params))
   }).then(r => {
-    if (!r.ok) throw new Error('서버 응답 오류 (HTTP ' + r.status + ')');
+    if (!r.ok) throw new Error(httpErrorMessage_(r.status));
     return r.json();
   });
 }
