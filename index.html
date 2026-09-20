@@ -1313,6 +1313,15 @@ function renderFolderSelectForCurrentNote() {
   folderSelectC.setDisabled(!note);
 }
 
+function getFilteredNotes() {
+  const q = document.getElementById('sidebar-search').value.trim().toLowerCase();
+  return notes.filter(n => {
+    if (activeFolder !== '__all__' && getNoteFolder(n) !== activeFolder) return false;
+    if (!q) return true;
+    return (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q);
+  });
+}
+
 function renderNoteList() {
   const wrap = document.getElementById('note-list');
 
@@ -1321,12 +1330,7 @@ function renderNoteList() {
     return;
   }
 
-  const q = document.getElementById('sidebar-search').value.trim().toLowerCase();
-  const filtered = notes.filter(n => {
-    if (activeFolder !== '__all__' && getNoteFolder(n) !== activeFolder) return false;
-    if (!q) return true;
-    return (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q);
-  });
+  const filtered = getFilteredNotes();
 
   wrap.innerHTML = '';
   if (filtered.length === 0) {
@@ -1935,6 +1939,14 @@ function init() {
   document.getElementById('btn-sidebar-close-mobile').addEventListener('click', closeMobileSidebar);
   document.getElementById('sidebar-backdrop').addEventListener('click', closeMobileSidebar);
   document.getElementById('sidebar-search').addEventListener('input', renderNoteList);
+  document.getElementById('sidebar-search').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const list = getFilteredNotes();
+    if (list.length === 0) return;
+    selectNote(list[0].id);
+    document.getElementById('editor').focus();
+  });
 
   // ---- 폴더 ----
   folderSelectC = new CustomSelect(document.getElementById('folder-select-wrap'));
@@ -2115,6 +2127,23 @@ function init() {
     if (e.altKey && !e.ctrlKey && !e.metaKey && key === 'n') {
       e.preventDefault();
       createNewNote();
+      return;
+    }
+
+    // Alt+↑ / Alt+↓ : 목록에서 이전/다음 메모로 바로 전환 (사이드바를 열거나 클릭할 필요 없이,
+    // 에디터에 타이핑 중이어도 그대로 작동해요). 전환 후 바로 이어서 쓸 수 있게 에디터에 포커스를 둡니다.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && sidebarView === 'notes') {
+      const list = getFilteredNotes();
+      if (list.length > 0) {
+        e.preventDefault();
+        const idx = list.findIndex(n => n.id === currentId);
+        let nextIdx;
+        if (idx === -1) nextIdx = 0;
+        else if (e.key === 'ArrowDown') nextIdx = (idx + 1) % list.length;
+        else nextIdx = (idx - 1 + list.length) % list.length;
+        selectNote(list[nextIdx].id);
+        document.getElementById('editor').focus();
+      }
       return;
     }
 
