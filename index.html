@@ -226,7 +226,7 @@
 
   #title-input {
     flex: 1; min-width: 60px; border: none; background: transparent; outline: none;
-    font-size: 13.5px; font-weight: 600; color: var(--editor-text); font-family: var(--font-ui);
+    font-size: 15px; font-weight: 600; color: var(--editor-text); font-family: var(--font-write);
   }
   #title-input::placeholder { color: var(--editor-muted); opacity: .7; }
 
@@ -403,6 +403,12 @@
   #confirm-input:focus { outline: none; border-color: var(--ui-accent); }
   #confirm-btn-row { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
   #confirm-btn-row button { width: 100%; }
+  #confirm-preview { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .conflict-preview-block {
+    border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--text-main) 3%, transparent);
+  }
+  .conflict-preview-label { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
+  .conflict-preview-text { font-size: 12.5px; color: var(--text-main); line-height: 1.5; word-break: break-word; }
 
   /* ---------- 폴더 관리 대화상자 ---------- */
   #folder-modal-overlay {
@@ -603,6 +609,7 @@
   <div id="confirm-panel">
     <p id="confirm-message"></p>
     <div id="confirm-input-wrap" class="hidden"><input type="text" id="confirm-input"></div>
+    <div id="confirm-preview" class="hidden"></div>
     <div id="confirm-btn-row"></div>
   </div>
 </div>
@@ -836,7 +843,7 @@ function closeMobileSidebar() {
 }
 
 // 새 메모를 만들 때 어떤 설정으로 시작할지, 그리고 폴더 목록도 (기기 간 동기화됨)
-const DEFAULT_CREATION_DEFAULTS = { useLastAsDefault: false, savedDefaults: null, lastUsedSettings: null, defaultFolder: '', folders: [] };
+const DEFAULT_CREATION_DEFAULTS = { useLastAsDefault: false, savedDefaults: null, lastUsedSettings: null, defaultFolder: '', folders: [], fontPresets: null };
 function loadCreationDefaultsCache() {
   try {
     const raw = localStorage.getItem(DEFAULTS_CACHE_KEY);
@@ -852,8 +859,19 @@ function loadCreationDefaultsFromServer() {
       if (res && res.ok && res.defaults) {
         creationDefaults = Object.assign({}, DEFAULT_CREATION_DEFAULTS, res.defaults);
         saveCreationDefaultsCache();
+        // 서버에 폰트 즐겨찾기가 저장되어 있으면(다른 기기에서 추가한 것 포함) 그걸 기준으로 맞춥니다.
+        if (Array.isArray(creationDefaults.fontPresets)) {
+          fontPresets = creationDefaults.fontPresets;
+          localStorage.setItem(FONT_PRESETS_KEY, JSON.stringify(fontPresets));
+        } else {
+          // 서버에 아직 즐겨찾기가 저장된 적이 없다면(맨 처음), 이 기기에 있던 걸 서버 기준으로 올려둡니다.
+          creationDefaults.fontPresets = fontPresets;
+          persistCreationDefaultsToServer();
+        }
         renderFolderChips();
         renderFolderSelectForCurrentNote();
+        const note = getCurrentNote();
+        if (note) renderFontSelect();
       }
     })
     .catch(() => {});
@@ -1001,6 +1019,8 @@ function showConfirm(message, onConfirm, opts) {
   opts = opts || {};
   document.getElementById('confirm-message').innerText = message;
   document.getElementById('confirm-input-wrap').classList.add('hidden');
+  document.getElementById('confirm-preview').classList.add('hidden');
+  document.getElementById('confirm-preview').innerHTML = '';
   _setConfirmButtons([
     { label: opts.okLabel || '확인', className: opts.danger ? 'btn-danger' : 'btn-primary', onClick: () => { closeConfirmDialog(); onConfirm(); } },
     { label: '취소', className: '', onClick: closeConfirmDialog }
@@ -1013,6 +1033,8 @@ function showPrompt(message, defaultValue, onSubmit) {
   const inputWrap = document.getElementById('confirm-input-wrap');
   const input = document.getElementById('confirm-input');
   inputWrap.classList.remove('hidden');
+  document.getElementById('confirm-preview').classList.add('hidden');
+  document.getElementById('confirm-preview').innerHTML = '';
   input.value = defaultValue || '';
   const submit = () => { const v = input.value.trim(); closeConfirmDialog(); if (v) onSubmit(v); };
   _setConfirmButtons([
@@ -1025,7 +1047,8 @@ function showPrompt(message, defaultValue, onSubmit) {
 }
 
 // choices: [{ label, action, danger?, primary? }] — onChoose(action)으로 콜백
-function showChoice(message, choices, onChoose) {
+// preview(선택): { mine: string, theirsLoader?: Promise<string> } — 두 내용을 간단히 미리 보여줍니다.
+function showChoice(message, choices, onChoose, preview) {
   document.getElementById('confirm-message').innerText = message;
   document.getElementById('confirm-input-wrap').classList.add('hidden');
   _setConfirmButtons(choices.map(c => ({
@@ -1033,6 +1056,32 @@ function showChoice(message, choices, onChoose) {
     className: c.danger ? 'btn-danger' : (c.primary ? 'btn-primary' : ''),
     onClick: () => { closeConfirmDialog(); onChoose(c.action); }
   })));
+
+  const previewEl = document.getElementById('confirm-preview');
+  if (preview) {
+    previewEl.classList.remove('hidden');
+    previewEl.innerHTML = `
+      <div class="conflict-preview-block">
+        <div class="conflict-preview-label">지금 이 기기</div>
+        <div class="conflict-preview-text"></div>
+      </div>
+      <div class="conflict-preview-block">
+        <div class="conflict-preview-label">다른 기기의 최신 내용</div>
+        <div class="conflict-preview-text" id="confirm-preview-theirs">불러오는 중...</div>
+      </div>
+    `;
+    previewEl.querySelectorAll('.conflict-preview-text')[0].innerText = preview.mine || '';
+    if (preview.theirsLoader) {
+      preview.theirsLoader.then(text => {
+        const el = document.getElementById('confirm-preview-theirs');
+        if (el) el.innerText = text; // 대화상자가 이미 닫혔다면 el이 없을 수 있음(안전하게 무시)
+      });
+    }
+  } else {
+    previewEl.classList.add('hidden');
+    previewEl.innerHTML = '';
+  }
+
   document.getElementById('confirm-overlay').classList.remove('hidden');
 }
 
@@ -1067,6 +1116,9 @@ function loadFontPresets() {
 }
 function saveFontPresets(list) {
   localStorage.setItem(FONT_PRESETS_KEY, JSON.stringify(list));
+  // 기기 간에도 같은 즐겨찾기를 쓸 수 있도록 서버에도 저장합니다.
+  creationDefaults.fontPresets = list;
+  persistCreationDefaultsToServer();
 }
 let fontPresets = loadFontPresets();
 
@@ -1263,6 +1315,9 @@ function getAllFolders() {
 
 let activeFolder = '__all__';
 
+let folderMoreOpen = false;
+const FOLDER_CHIPS_MAX = 5;
+
 function renderFolderChips() {
   const wrap = document.getElementById('folder-chips');
   wrap.innerHTML = '';
@@ -1277,7 +1332,60 @@ function renderFolderChips() {
   };
 
   wrap.appendChild(makeChip('전체', '__all__'));
-  getAllFolders().forEach(f => wrap.appendChild(makeChip(f, f)));
+
+  // 자주 쓰는(=메모가 많이 들어있는) 폴더부터 앞에 노출하고, 나머지는 "더보기"로 숨겨둡니다.
+  const counts = {};
+  notes.forEach(n => { const f = getNoteFolder(n); if (f) counts[f] = (counts[f] || 0) + 1; });
+  const sorted = getAllFolders().sort((a, b) => (counts[b] || 0) - (counts[a] || 0) || a.localeCompare(b, 'ko'));
+
+  let visible = sorted.slice(0, FOLDER_CHIPS_MAX);
+  let overflow = sorted.slice(FOLDER_CHIPS_MAX);
+  // 지금 선택된 폴더가 "더보기" 쪽에 숨어있다면, 눈에 보이는 칩으로 끌어올립니다.
+  if (overflow.includes(activeFolder)) {
+    visible = visible.slice(0, -1).concat(activeFolder);
+    overflow = overflow.filter(f => f !== activeFolder);
+  }
+
+  visible.forEach(f => wrap.appendChild(makeChip(f, f)));
+
+  if (overflow.length > 0) {
+    const moreWrap = document.createElement('div');
+    moreWrap.style.position = 'relative';
+    moreWrap.style.display = 'inline-block';
+
+    const moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'folder-chip folder-chip-more';
+    moreBtn.innerText = '더보기 (' + overflow.length + ') ▾';
+    moreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      folderMoreOpen = !folderMoreOpen;
+      renderFolderChips();
+    });
+
+    const list = document.createElement('div');
+    list.className = 'csel-list' + (folderMoreOpen ? '' : ' hidden');
+    list.style.left = '0'; list.style.right = 'auto'; list.style.minWidth = '150px';
+    overflow.forEach(f => {
+      const item = document.createElement('div');
+      item.className = 'csel-opt';
+      item.innerText = f;
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        activeFolder = f;
+        folderMoreOpen = false;
+        renderFolderChips();
+        renderNoteList();
+      });
+      list.appendChild(item);
+    });
+
+    moreWrap.appendChild(moreBtn);
+    moreWrap.appendChild(list);
+    wrap.appendChild(moreWrap);
+  } else {
+    folderMoreOpen = false;
+  }
 
   const addChip = document.createElement('button');
   addChip.className = 'folder-chip folder-chip-add';
@@ -1300,6 +1408,9 @@ function renderFolderChips() {
   });
   wrap.appendChild(addChip);
 }
+document.addEventListener('click', () => {
+  if (folderMoreOpen) { folderMoreOpen = false; renderFolderChips(); }
+});
 
 function renderFolderSelectForCurrentNote() {
   const note = getCurrentNote();
@@ -1486,7 +1597,7 @@ function scheduleSave() {
 // 같은 메모에 대해 저장 요청이 겹쳐서 나가지 않도록 큐를 둡니다.
 // (겹쳐서 나가면, 나중 요청이 들고 있는 "마지막으로 알던 저장 시각"이 낡아서
 //  방금 다른 요청이 막 갱신한 시각과 어긋나 스스로와 충돌하는 것처럼 보일 수 있어요)
-function saveNoteToServer(note, onDone) {
+function saveNoteToServer(note, onDone, force) {
   if (note._saveInFlight) {
     note._savePending = true;
     note._pendingCallbacks = note._pendingCallbacks || [];
@@ -1501,7 +1612,7 @@ function saveNoteToServer(note, onDone) {
     title: note.title,
     content: note.content,
     settings: note.settings,
-    expectedUpdatedAt: wasLocal ? null : (note.updatedAt || null)
+    expectedUpdatedAt: (wasLocal || force) ? null : (note.updatedAt || null)
   };
   callApi('save', { pw: password, note: payload })
     .then(res => {
@@ -1541,18 +1652,31 @@ function saveNoteToServer(note, onDone) {
 }
 
 // 다른 기기가 먼저 저장해서 충돌이 난 경우: 내 변경사항을 잃지 않도록 선택지를 줍니다.
+function truncatePreview_(text) {
+  const t = (text || '').trim();
+  if (!t) return '(내용 없음)';
+  const oneLine = t.replace(/\s+/g, ' ');
+  return oneLine.length > 160 ? oneLine.slice(0, 160) + '…' : oneLine;
+}
+
 function handleSaveConflict(note) {
   if (note._conflictPending) return; // 이미 대화상자가 떠 있으면 중복으로 띄우지 않음
   note._conflictPending = true;
+
   showChoice(
-    '다른 기기에서 방금 이 메모를 수정해서, 지금 내용을 그대로 덮어쓰면 그쪽 수정사항이 사라져요. 어떻게 할까요?',
+    '다른 기기에서 방금 이 메모를 수정했어요. 어떻게 할까요?',
     [
-      { label: '취소 (계속 편집)', action: 'cancel' },
-      { label: '최신 내용 불러오기', action: 'reload', danger: true },
-      { label: '내 내용은 새 메모로 저장', action: 'duplicate', primary: true }
+      { label: '이 내용으로 저장 (덮어쓰기)', action: 'force', primary: true },
+      { label: '최신 내용 불러오기 (내 변경사항 버림)', action: 'reload', danger: true },
+      { label: '둘 다 보존 (내 내용은 새 메모로)', action: 'duplicate' }
     ],
     (action) => {
-      if (action === 'duplicate') {
+      if (action === 'force') {
+        saveNoteToServer(note, (ok) => {
+          delete note._conflictPending;
+          if (ok) { showSaveDot(); renderNoteList(); }
+        }, true);
+      } else if (action === 'duplicate') {
         const dup = {
           id: 'local_' + Date.now(),
           title: (note.title && note.title.trim() ? note.title.trim() : '제목 없음') + ' (충돌 사본)',
@@ -1571,6 +1695,18 @@ function handleSaveConflict(note) {
       } else {
         delete note._conflictPending;
       }
+    },
+    {
+      mine: truncatePreview_(note.content),
+      theirsLoader: callApi('list', { pw: password })
+        .then(res => {
+          if (res && res.ok) {
+            const fresh = res.notes.find(n => n.id === note.id);
+            if (fresh) return truncatePreview_(fresh.content);
+          }
+          return '(불러오지 못했어요)';
+        })
+        .catch(() => '(불러오지 못했어요)')
     }
   );
 }
@@ -2245,8 +2381,8 @@ function init() {
   document.getElementById('btn-add-preset').addEventListener('click', () => {
     const name = document.getElementById('new-font-name').value.trim();
     const url = document.getElementById('new-font-url').value.trim();
-    if (!name) { alert('폰트 이름을 입력해주세요.'); return; }
-    if (fontPresets.some(p => p.name === name)) { alert('이미 있는 이름이에요.'); return; }
+    if (!name) { showToast('폰트 이름을 입력해주세요.'); return; }
+    if (fontPresets.some(p => p.name === name)) { showToast('이미 있는 이름이에요.'); return; }
     fontPresets.push({ name, url });
     saveFontPresets(fontPresets);
     document.getElementById('new-font-name').value = ''; document.getElementById('new-font-url').value = '';
