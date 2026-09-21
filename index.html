@@ -470,6 +470,16 @@
     transition: background .15s var(--ease), color .15s var(--ease);
   }
   #folder-manage-btn:hover { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
+  #folder-more-wrap { position: relative; flex-shrink: 0; }
+  #folder-more-wrap.hidden { display: none; }
+  #folder-more-btn {
+    border: none; background: transparent; color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 7px;
+    transition: background .15s var(--ease), color .15s var(--ease), transform .15s var(--ease);
+  }
+  #folder-more-btn:hover, #folder-more-btn.open { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
+  #folder-more-btn.open svg { transform: rotate(180deg); }
+  #folder-more-list { left: auto; right: 0; min-width: 150px; }
   #folder-chips-row { display: flex; align-items: center; gap: 4px; padding: 10px 14px 12px 18px; flex-wrap: wrap; }
   #folder-chips-row #folder-chips { padding: 0; flex: 1; display: flex; gap: 5px; flex-wrap: wrap; }
 
@@ -558,6 +568,12 @@
     </div>
     <div id="folder-chips-row">
       <div id="folder-chips"></div>
+      <div id="folder-more-wrap">
+        <button id="folder-more-btn" title="더 많은 폴더" type="button">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </button>
+        <div id="folder-more-list" class="csel-list hidden"></div>
+      </div>
       <button id="folder-manage-btn" title="폴더 관리" type="button">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
       </button>
@@ -1333,14 +1349,14 @@ function renderFolderChips() {
 
   wrap.appendChild(makeChip('전체', '__all__'));
 
-  // 자주 쓰는(=메모가 많이 들어있는) 폴더부터 앞에 노출하고, 나머지는 "더보기"로 숨겨둡니다.
+  // 자주 쓰는(=메모가 많이 들어있는) 폴더부터 앞에 노출하고, 나머지는 옆의 화살표 버튼으로 숨겨둡니다.
   const counts = {};
   notes.forEach(n => { const f = getNoteFolder(n); if (f) counts[f] = (counts[f] || 0) + 1; });
   const sorted = getAllFolders().sort((a, b) => (counts[b] || 0) - (counts[a] || 0) || a.localeCompare(b, 'ko'));
 
   let visible = sorted.slice(0, FOLDER_CHIPS_MAX);
   let overflow = sorted.slice(FOLDER_CHIPS_MAX);
-  // 지금 선택된 폴더가 "더보기" 쪽에 숨어있다면, 눈에 보이는 칩으로 끌어올립니다.
+  // 지금 선택된 폴더가 숨겨진 쪽에 있다면, 눈에 보이는 칩으로 끌어올립니다.
   if (overflow.includes(activeFolder)) {
     visible = visible.slice(0, -1).concat(activeFolder);
     overflow = overflow.filter(f => f !== activeFolder);
@@ -1348,44 +1364,28 @@ function renderFolderChips() {
 
   visible.forEach(f => wrap.appendChild(makeChip(f, f)));
 
-  if (overflow.length > 0) {
-    const moreWrap = document.createElement('div');
-    moreWrap.style.position = 'relative';
-    moreWrap.style.display = 'inline-block';
-
-    const moreBtn = document.createElement('button');
-    moreBtn.type = 'button';
-    moreBtn.className = 'folder-chip folder-chip-more';
-    moreBtn.innerText = '더보기 (' + overflow.length + ') ▾';
-    moreBtn.addEventListener('click', (e) => {
+  const moreWrap = document.getElementById('folder-more-wrap');
+  const moreBtn = document.getElementById('folder-more-btn');
+  const moreList = document.getElementById('folder-more-list');
+  moreWrap.classList.toggle('hidden', overflow.length === 0);
+  moreBtn.title = overflow.length > 0 ? overflow.length + '개 폴더 더보기' : '더 많은 폴더';
+  moreList.innerHTML = '';
+  overflow.forEach(f => {
+    const item = document.createElement('div');
+    item.className = 'csel-opt';
+    item.innerText = f;
+    item.addEventListener('click', (e) => {
       e.stopPropagation();
-      folderMoreOpen = !folderMoreOpen;
+      activeFolder = f;
+      folderMoreOpen = false;
       renderFolderChips();
+      renderNoteList();
     });
-
-    const list = document.createElement('div');
-    list.className = 'csel-list' + (folderMoreOpen ? '' : ' hidden');
-    list.style.left = '0'; list.style.right = 'auto'; list.style.minWidth = '150px';
-    overflow.forEach(f => {
-      const item = document.createElement('div');
-      item.className = 'csel-opt';
-      item.innerText = f;
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        activeFolder = f;
-        folderMoreOpen = false;
-        renderFolderChips();
-        renderNoteList();
-      });
-      list.appendChild(item);
-    });
-
-    moreWrap.appendChild(moreBtn);
-    moreWrap.appendChild(list);
-    wrap.appendChild(moreWrap);
-  } else {
-    folderMoreOpen = false;
-  }
+    moreList.appendChild(item);
+  });
+  moreList.classList.toggle('hidden', !folderMoreOpen);
+  moreBtn.classList.toggle('open', folderMoreOpen);
+  if (overflow.length === 0) folderMoreOpen = false;
 
   const addChip = document.createElement('button');
   addChip.className = 'folder-chip folder-chip-add';
@@ -2176,6 +2176,11 @@ function init() {
       listEl.appendChild(row);
     });
   }
+  document.getElementById('folder-more-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    folderMoreOpen = !folderMoreOpen;
+    renderFolderChips();
+  });
   document.getElementById('folder-manage-btn').addEventListener('click', () => {
     renderFolderManageList();
     document.getElementById('folder-modal-overlay').classList.remove('hidden');
