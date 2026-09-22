@@ -158,10 +158,12 @@
   #sidebar-search::placeholder { color: var(--text-muted); }
   #sidebar-search:focus { outline: none; border-color: var(--ui-accent); }
 
-  #folder-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  #folder-chips { display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  #folder-chips::-webkit-scrollbar { display: none; }
   .folder-chip {
-    border: none; background: transparent; color: var(--text-muted); font-size: 11px; font-weight: 600;
-    padding: 5px 9px; border-radius: 999px; cursor: pointer; font-family: inherit;
+    border: none; background: transparent; color: var(--text-muted); font-size: 10.5px; font-weight: 600;
+    padding: 4px 8px; border-radius: 999px; cursor: pointer; font-family: inherit;
+    flex-shrink: 0; white-space: nowrap;
     transition: background .15s var(--ease), color .15s var(--ease);
   }
   .folder-chip:hover { color: var(--text-main); }
@@ -480,8 +482,8 @@
   #folder-more-btn:hover, #folder-more-btn.open { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
   #folder-more-btn.open svg { transform: rotate(180deg); }
   #folder-more-list { left: auto; right: 0; min-width: 150px; }
-  #folder-chips-row { display: flex; align-items: center; gap: 4px; padding: 10px 14px 12px 18px; flex-wrap: wrap; }
-  #folder-chips-row #folder-chips { padding: 0; flex: 1; display: flex; gap: 5px; flex-wrap: wrap; }
+  #folder-chips-row { display: flex; align-items: center; gap: 4px; padding: 10px 14px 12px 18px; flex-wrap: nowrap; }
+  #folder-chips-row #folder-chips { padding: 0; flex: 1; min-width: 0; }
 
   button.btn {
     border: none; border-radius: 999px; padding: 10px 18px; font-size: 12.5px; cursor: pointer;
@@ -869,21 +871,33 @@ function loadCreationDefaultsCache() {
 function saveCreationDefaultsCache() { localStorage.setItem(DEFAULTS_CACHE_KEY, JSON.stringify(creationDefaults)); }
 let creationDefaults = loadCreationDefaultsCache();
 
+// 이름이 같은 폰트는 하나로 합치고, 서로 다른 건 둘 다 남깁니다 (기기별로 따로 추가해온 것들을 합치기 위함).
+function mergeFontPresets(localList, serverList) {
+  const byName = new Map();
+  (serverList || []).forEach(p => byName.set(p.name, p));
+  (localList || []).forEach(p => { if (!byName.has(p.name)) byName.set(p.name, p); });
+  return Array.from(byName.values());
+}
+
 function loadCreationDefaultsFromServer() {
   callApi('getDefaults', { pw: password })
     .then(res => {
       if (res && res.ok && res.defaults) {
         creationDefaults = Object.assign({}, DEFAULT_CREATION_DEFAULTS, res.defaults);
         saveCreationDefaultsCache();
-        // 서버에 폰트 즐겨찾기가 저장되어 있으면(다른 기기에서 추가한 것 포함) 그걸 기준으로 맞춥니다.
-        if (Array.isArray(creationDefaults.fontPresets)) {
-          fontPresets = creationDefaults.fontPresets;
-          localStorage.setItem(FONT_PRESETS_KEY, JSON.stringify(fontPresets));
-        } else {
-          // 서버에 아직 즐겨찾기가 저장된 적이 없다면(맨 처음), 이 기기에 있던 걸 서버 기준으로 올려둡니다.
-          creationDefaults.fontPresets = fontPresets;
+
+        // 이 기기의 즐겨찾기와 서버 즐겨찾기를 합칩니다(겹치는 이름은 하나로, 나머지는 둘 다 유지).
+        const merged = mergeFontPresets(fontPresets, creationDefaults.fontPresets);
+        const serverHadSame = Array.isArray(creationDefaults.fontPresets)
+          && creationDefaults.fontPresets.length === merged.length;
+        fontPresets = merged;
+        localStorage.setItem(FONT_PRESETS_KEY, JSON.stringify(fontPresets));
+        creationDefaults.fontPresets = merged;
+        if (!serverHadSame) {
+          // 이 기기에만 있던 즐겨찾기가 있었다면, 합쳐진 목록을 서버에도 반영해둡니다.
           persistCreationDefaultsToServer();
         }
+
         renderFolderChips();
         renderFolderSelectForCurrentNote();
         const note = getCurrentNote();
