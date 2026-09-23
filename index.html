@@ -158,7 +158,7 @@
   #sidebar-search::placeholder { color: var(--text-muted); }
   #sidebar-search:focus { outline: none; border-color: var(--ui-accent); }
 
-  #folder-chips { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+  #folder-chips { display: flex; gap: 4px; flex-wrap: wrap; overflow: hidden; }
   .folder-chip {
     border: none; background: transparent; color: var(--text-muted); font-size: 10.5px; font-weight: 600;
     padding: 4px 8px; border-radius: 999px; cursor: pointer; font-family: inherit;
@@ -481,7 +481,8 @@
   #folder-more-btn:hover, #folder-more-btn.open { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
   #folder-more-btn.open svg { transform: rotate(180deg); }
   #folder-more-list { left: auto; right: 0; min-width: 150px; }
-  #folder-chips-row { display: flex; align-items: center; gap: 4px; padding: 10px 14px 12px 18px; flex-wrap: nowrap; }
+  #folder-chips-row { display: flex; align-items: flex-start; gap: 4px; padding: 10px 14px 12px 18px; flex-wrap: nowrap; }
+  #folder-more-wrap, #folder-manage-btn { margin-top: 2px; }
   #folder-chips-row #folder-chips { padding: 0; flex: 1; min-width: 0; }
 
   button.btn {
@@ -1395,12 +1396,18 @@ function renderFolderChips() {
   wrap.appendChild(addChip);
 
   const overflow = [];
-  // children: [전체, ...폴더들, +] — 양쪽 끝(전체, +)은 항상 남기고, 그 사이에서 뒤쪽부터 뺍니다.
-  while (wrap.scrollWidth > wrap.clientWidth + 1 && wrap.children.length > 2) {
-    const removeIdx = wrap.children.length - 2; // '+' 바로 앞
-    const removed = wrap.children[removeIdx];
-    overflow.unshift(removed.dataset.folderValue);
-    wrap.removeChild(removed);
+  // children: [전체, ...폴더들, +] — 양쪽 끝(전체, +)은 항상 남기고,
+  // 실제 줄 수가 2줄을 넘으면 그 사이에서 뒤쪽부터(=상대적으로 안 쓰는 폴더부터) 뺍니다.
+  if (wrap.children.length > 0) {
+    const chipHeight = wrap.children[0].getBoundingClientRect().height;
+    const gapPx = 4; // CSS의 #folder-chips gap 값과 맞춤
+    const maxHeight = chipHeight * 2 + gapPx + 1;
+    while (wrap.scrollHeight > maxHeight && wrap.children.length > 2) {
+      const removeIdx = wrap.children.length - 2; // '+' 바로 앞
+      const removed = wrap.children[removeIdx];
+      overflow.unshift(removed.dataset.folderValue);
+      wrap.removeChild(removed);
+    }
   }
 
   const moreWrap = document.getElementById('folder-more-wrap');
@@ -1534,6 +1541,7 @@ function selectNote(id) {
   updateCount();
   renderFolderSelectForCurrentNote();
   renderNoteList();
+  document.getElementById('editor').focus();
   if (isMobileView()) closeMobileSidebar();
 }
 
@@ -1950,15 +1958,46 @@ function playTypeSound() {
 // ============================================================
 // 타자기 스크롤
 // ============================================================
+// textarea 안에서 줄바꿈(자동 줄바꿈 포함)까지 반영한 커서의 실제 세로 픽셀 위치를 구합니다.
+// (textarea 자체엔 이런 API가 없어서, 화면에 안 보이는 '거울' div를 하나 만들어
+//  커서 앞부분까지의 텍스트를 똑같은 폰트/너비로 넣어보고 그 높이를 재는 방식입니다)
+function getCaretPixelTop_(ta) {
+  const style = getComputedStyle(ta);
+  const mirror = document.createElement('div');
+  const props = [
+    'boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing'
+  ];
+  props.forEach(p => { mirror.style[p] = style[p]; });
+  mirror.style.position = 'absolute';
+  mirror.style.visibility = 'hidden';
+  mirror.style.whiteSpace = 'pre-wrap';
+  mirror.style.wordWrap = 'break-word';
+  mirror.style.top = '0';
+  mirror.style.left = '-9999px';
+  mirror.style.height = 'auto';
+
+  const before = ta.value.slice(0, ta.selectionStart);
+  mirror.textContent = before;
+  const marker = document.createElement('span');
+  marker.textContent = '.';
+  mirror.appendChild(marker);
+
+  document.body.appendChild(mirror);
+  const top = marker.offsetTop;
+  document.body.removeChild(mirror);
+  return top;
+}
+
 function applyTypewriterScroll() {
   const note = getCurrentNote();
   const s = (note && note.settings) || defaultSettings();
   if (!s.typewriterScroll) return;
   const ta = document.getElementById('editor');
-  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight);
-  const before = ta.value.slice(0, ta.selectionStart);
-  const lineIdx = before.split('\n').length - 1;
-  const target = lineIdx * lineHeight - ta.clientHeight / 2 + lineHeight / 2;
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+  const caretTop = getCaretPixelTop_(ta);
+  const target = caretTop - ta.clientHeight / 2 + lineHeight / 2;
   ta.scrollTop = Math.max(0, target);
 }
 
