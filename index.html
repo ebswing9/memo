@@ -405,6 +405,13 @@
   #confirm-btn-row { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
   #confirm-btn-row button { width: 100%; }
   #confirm-preview { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .note-info-row {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+    padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .note-info-row:last-child { border-bottom: none; }
+  .note-info-label { color: var(--text-muted); flex-shrink: 0; }
+  .note-info-value { color: var(--text-main); font-weight: 600; text-align: right; }
   .conflict-preview-block {
     border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--text-main) 3%, transparent);
   }
@@ -471,6 +478,13 @@
     transition: background .15s var(--ease), color .15s var(--ease);
   }
   #folder-manage-btn:hover { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
+  #folder-add-btn {
+    border: none; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 7px;
+    font-size: 15px; font-weight: 600; line-height: 1; padding: 0;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  #folder-add-btn:hover { background: color-mix(in srgb, var(--text-main) 8%, transparent); color: var(--text-main); }
   #folder-more-wrap { position: relative; flex-shrink: 0; }
   #folder-more-wrap.hidden { display: none; }
   #folder-more-btn {
@@ -570,6 +584,7 @@
     </div>
     <div id="folder-chips-row">
       <div id="folder-chips"></div>
+      <button id="folder-add-btn" title="새 폴더" type="button">+</button>
       <div id="folder-more-wrap">
         <button id="folder-more-btn" title="더 많은 폴더" type="button">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
@@ -609,6 +624,9 @@
         </button>
         <button class="top-btn" id="btn-export" title="텍스트 파일로 저장">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 19h14"></path></svg>
+        </button>
+        <button class="top-btn" id="btn-note-info" title="메모 정보">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
         </button>
         <button class="top-btn" id="btn-settings" title="이 메모 설정">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
@@ -798,8 +816,8 @@ function callGasRun(action, params) {
 
 function httpErrorMessage_(status) {
   if (status === 404) {
-    return 'API 주소를 찾을 수 없어요 (404). config.js의 GAS_WEBAPP_URL이 .../exec 로 끝나는지, '
-      + '그리고 Code.gs를 고친 뒤 "배포 > 배포 관리 > 수정 > 새 버전 > 배포"로 재배포했는지 확인해주세요.';
+    return 'API 주소를 찾을 수 없어요 (404). 일시적인 구글 앱스스크립트 서버 문제일 수 있으니 잠시 후 다시 시도해주세요. '
+      + '계속되면 config.js의 GAS_WEBAPP_URL이 .../exec 로 끝나는지 확인해주세요.';
   }
   if (status === 401 || status === 403) {
     return '접근이 거부됐어요 (' + status + '). Apps Script 배포 설정에서 액세스 권한이 '
@@ -1370,41 +1388,19 @@ function renderFolderChips() {
     sorted = [activeFolder].concat(sorted.filter(f => f !== activeFolder));
   }
 
-  // 일단 후보를 전부 넣어보고("전체" + 폴더들 + "+"), 실제 렌더링 폭을 기준으로
-  // 한 줄에 안 들어가는 것만 뒤에서부터(=상대적으로 안 쓰는 폴더부터) "더보기"로 뺍니다.
+  // 후보를 전부 넣어보고("전체" + 폴더들), 실제 렌더링 높이를 기준으로
+  // 2줄에 안 들어가는 것만 뒤에서부터(=상대적으로 안 쓰는 폴더부터) "더보기"로 뺍니다.
   wrap.appendChild(makeChip('전체', '__all__'));
   sorted.forEach(f => wrap.appendChild(makeChip(f, f)));
-  const addChip = document.createElement('button');
-  addChip.className = 'folder-chip folder-chip-add';
-  addChip.type = 'button';
-  addChip.title = '새 폴더';
-  addChip.innerText = '+';
-  addChip.addEventListener('click', () => {
-    showPrompt('새 폴더 이름을 입력하세요', '', (name) => {
-      registerFolderName(name);
-      const note = getCurrentNote();
-      if (note) {
-        note.settings.folder = name;
-        scheduleSave();
-        renderFolderSelectForCurrentNote();
-      }
-      activeFolder = name;
-      renderFolderChips();
-      renderNoteList();
-    });
-  });
-  wrap.appendChild(addChip);
 
   const overflow = [];
-  // children: [전체, ...폴더들, +] — 양쪽 끝(전체, +)은 항상 남기고,
-  // 실제 줄 수가 2줄을 넘으면 그 사이에서 뒤쪽부터(=상대적으로 안 쓰는 폴더부터) 뺍니다.
+  // children: [전체, ...폴더들] — '전체'(첫 칸)는 항상 남기고, 뒤에서부터 뺍니다.
   if (wrap.children.length > 0) {
     const chipHeight = wrap.children[0].getBoundingClientRect().height;
     const gapPx = 4; // CSS의 #folder-chips gap 값과 맞춤
     const maxHeight = chipHeight * 2 + gapPx + 1;
-    while (wrap.scrollHeight > maxHeight && wrap.children.length > 2) {
-      const removeIdx = wrap.children.length - 2; // '+' 바로 앞
-      const removed = wrap.children[removeIdx];
+    while (wrap.scrollHeight > maxHeight && wrap.children.length > 1) {
+      const removed = wrap.lastElementChild;
       overflow.unshift(removed.dataset.folderValue);
       wrap.removeChild(removed);
     }
@@ -1649,7 +1645,7 @@ function saveNoteToServer(note, onDone, force) {
           note._savePending = false;
           const callbacks = note._pendingCallbacks || [];
           note._pendingCallbacks = [];
-          saveNoteToServer(note, (ok2) => callbacks.forEach(cb => cb(ok2)));
+          saveNoteToServer(note, (ok2) => callbacks.forEach(cb => { if (typeof cb === 'function') cb(ok2); }));
         }
       };
       if (!res) { showToast('저장 응답을 받지 못했어요. 다시 시도해주세요.'); finish(false); return; }
@@ -1672,7 +1668,7 @@ function saveNoteToServer(note, onDone, force) {
         note._savePending = false;
         const callbacks = note._pendingCallbacks || [];
         note._pendingCallbacks = [];
-        saveNoteToServer(note, (ok2) => callbacks.forEach(cb => cb(ok2)));
+        saveNoteToServer(note, (ok2) => callbacks.forEach(cb => { if (typeof cb === 'function') cb(ok2); }));
       }
     });
 }
@@ -1682,7 +1678,42 @@ function truncatePreview_(text) {
   const t = (text || '').trim();
   if (!t) return '(내용 없음)';
   const oneLine = t.replace(/\s+/g, ' ');
-  return oneLine.length > 160 ? oneLine.slice(0, 160) + '…' : oneLine;
+  // 충돌 상황에서는 방금 고친 부분이 보통 뒤쪽에 있을 가능성이 높아서, 끝부분을 보여줍니다.
+  return oneLine.length > 160 ? '…' + oneLine.slice(-160) : oneLine;
+}
+
+function showNoteInfo(note) {
+  const content = note.content || '';
+  const wordCount = (content.trim().match(/\S+/g) || []).length;
+  const rows = [
+    ['생성', note.createdAt ? formatDateTime(new Date(note.createdAt)) : '—'],
+    ['최종 수정', note.updatedAt ? formatDateTime(new Date(note.updatedAt)) : '—'],
+    ['폴더', getNoteFolder(note) || '없음'],
+    ['글자 수', content.length + '자'],
+    ['단어 수', wordCount + '개']
+  ];
+
+  document.getElementById('confirm-message').innerText = '메모 정보';
+  document.getElementById('confirm-input-wrap').classList.add('hidden');
+  const preview = document.getElementById('confirm-preview');
+  preview.classList.remove('hidden');
+  preview.innerHTML = '';
+  rows.forEach(([label, value]) => {
+    const row = document.createElement('div');
+    row.className = 'note-info-row';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'note-info-label';
+    labelEl.innerText = label;
+    const valueEl = document.createElement('span');
+    valueEl.className = 'note-info-value';
+    valueEl.innerText = value;
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    preview.appendChild(row);
+  });
+
+  _setConfirmButtons([{ label: '닫기', className: 'btn-primary', onClick: closeConfirmDialog }]);
+  document.getElementById('confirm-overlay').classList.remove('hidden');
 }
 
 function handleSaveConflict(note) {
@@ -2233,6 +2264,20 @@ function init() {
       listEl.appendChild(row);
     });
   }
+  document.getElementById('folder-add-btn').addEventListener('click', () => {
+    showPrompt('새 폴더 이름을 입력하세요', '', (name) => {
+      registerFolderName(name);
+      const note = getCurrentNote();
+      if (note) {
+        note.settings.folder = name;
+        scheduleSave();
+        renderFolderSelectForCurrentNote();
+      }
+      activeFolder = name;
+      renderFolderChips();
+      renderNoteList();
+    });
+  });
   document.getElementById('folder-more-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     folderMoreOpen = !folderMoreOpen;
@@ -2295,6 +2340,10 @@ function init() {
   });
 
   // ---- 상단 버튼 ----
+  document.getElementById('btn-note-info').addEventListener('click', () => {
+    const note = getCurrentNote();
+    if (note) showNoteInfo(note);
+  });
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
   document.getElementById('btn-manual-save').addEventListener('click', manualSave);
   document.getElementById('btn-top-new').addEventListener('click', createNewNote);
