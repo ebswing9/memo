@@ -1737,8 +1737,7 @@ function showNoteInfo(note) {
     ['폴더', getNoteFolder(note) || '없음'],
     ['글자 수', content.length + '자'],
     ['단어 수', wordCount + '개'],
-    ['작성 소요시간', st.totalWriteMs != null ? formatDuration_(st.totalWriteMs) : '—'],
-    ['저장된 횟수', st.editCount != null ? st.editCount + '회' : '—']
+    ['작성 소요시간', st.totalWriteMs != null ? formatDuration_(st.totalWriteMs) : '—']
   ];
 
   document.getElementById('confirm-message').innerText = '메모 정보';
@@ -1824,7 +1823,6 @@ function doSave() {
   saveNoteToServer(note, (ok) => {
     if (!ok) return;
     if (wasNewDraft) { currentId = note.id; isNewDraft = false; }
-    note.settings.editCount = (note.settings.editCount || 0) + 1;
     editorDirty = false;
     showSaveDot();
     renderNoteList();
