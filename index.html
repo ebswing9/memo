@@ -625,7 +625,7 @@
         <button class="top-btn" id="btn-export" title="텍스트 파일로 저장">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 19h14"></path></svg>
         </button>
-        <button class="top-btn" id="btn-note-info" title="메모 정보">
+        <button class="top-btn" id="btn-note-info" title="메모 정보 (Ctrl/Cmd+I)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
         </button>
         <button class="top-btn" id="btn-settings" title="이 메모 설정">
@@ -866,6 +866,48 @@ let trashedNotes = [];   // 휴지통에 있는 메모 목록
 let sidebarView = 'notes'; // 'notes' | 'trash'
 let hoveredNoteId = null; // 사이드바에서 마우스를 올리고 있는 메모 (Delete 키로 바로 삭제하기 위함)
 let editorDirty = false; // 마지막으로 불러온(또는 저장된) 내용 이후로 사용자가 뭔가 입력했는지
+
+// ---- 작성 소요시간 추적 ----
+// 사용자가 실제로 타이핑하는 동안의 시간만 누적합니다 (1분 이상 입력이 없으면 그 구간은 쉬는 시간으로 보고 세지 않아요).
+let writingSessionStart = null;
+let writingLastActivity = null;
+let writingIdleTimer = null;
+const WRITING_IDLE_MS = 60000;
+
+// 지금까지의 작성 구간을 메모에 확정 반영하고 세션을 끝냅니다.
+function flushWritingTime(note) {
+  if (writingSessionStart && note && note.settings) {
+    const end = writingLastActivity || Date.now();
+    note.settings.totalWriteMs = (note.settings.totalWriteMs || 0) + Math.max(0, end - writingSessionStart);
+  }
+  writingSessionStart = null;
+  writingLastActivity = null;
+  clearTimeout(writingIdleTimer);
+}
+// 저장 직전에 지금까지의 시간을 메모에 반영하되, 세션은 이어서 계속 셉니다 (저장본에 최신 시간이 담기도록).
+function checkpointWritingTime(note) {
+  if (writingSessionStart && note && note.settings) {
+    const end = writingLastActivity || Date.now();
+    note.settings.totalWriteMs = (note.settings.totalWriteMs || 0) + Math.max(0, end - writingSessionStart);
+    writingSessionStart = end;
+  }
+}
+function trackWritingActivity() {
+  const note = getCurrentNote();
+  if (!note) return;
+  const now = Date.now();
+  if (!writingSessionStart) writingSessionStart = now;
+  writingLastActivity = now;
+  clearTimeout(writingIdleTimer);
+  writingIdleTimer = setTimeout(() => flushWritingTime(note), WRITING_IDLE_MS);
+}
+function formatDuration_(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  if (totalSec < 60) return '1분 미만';
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  return h > 0 ? (h + '시간 ' + m + '분') : (m + '분');
+}
 const NOTES_CACHE_KEY = 'notesapp_notes_cache';
 let currentId = null;    // 현재 열려 있는 메모(로컬 임시 id 포함)
 let saveTimer = null;
@@ -1523,6 +1565,7 @@ function renderTrashListInto(wrap) {
 // ============================================================
 function selectNote(id) {
   if (id === currentId) return; // 이미 보고 있는 메모면 아무것도 안 함
+  flushWritingTime(getCurrentNote());
   flushPendingSave(); // 떠나기 전에, 지금 메모에 대해 예약된 저장이 있으면 먼저 끝냅니다
   currentId = id;
   isNewDraft = false;
@@ -1542,6 +1585,7 @@ function selectNote(id) {
 }
 
 function createNewNote() {
+  flushWritingTime(getCurrentNote());
   flushPendingSave(); // 떠나기 전에, 지금 메모에 대해 예약된 저장이 있으면 먼저 끝냅니다
   const localId = 'local_' + Date.now();
   const note = { id: localId, title: '', content: '', settings: getInitialSettingsForNewNote(), createdAt: '', updatedAt: '' };
@@ -1683,6 +1727,8 @@ function truncatePreview_(text) {
 }
 
 function showNoteInfo(note) {
+  flushWritingTime(note); // 지금까지 쓴 시간을 먼저 반영
+  const st = note.settings || {};
   const content = note.content || '';
   const wordCount = (content.trim().match(/\S+/g) || []).length;
   const rows = [
@@ -1690,7 +1736,9 @@ function showNoteInfo(note) {
     ['최종 수정', note.updatedAt ? formatDateTime(new Date(note.updatedAt)) : '—'],
     ['폴더', getNoteFolder(note) || '없음'],
     ['글자 수', content.length + '자'],
-    ['단어 수', wordCount + '개']
+    ['단어 수', wordCount + '개'],
+    ['작성 소요시간', st.totalWriteMs != null ? formatDuration_(st.totalWriteMs) : '—'],
+    ['저장된 횟수', st.editCount != null ? st.editCount + '회' : '—']
   ];
 
   document.getElementById('confirm-message').innerText = '메모 정보';
@@ -1771,10 +1819,12 @@ function handleSaveConflict(note) {
 function doSave() {
   const note = getCurrentNote();
   if (!note || note._conflictPending) return;
+  checkpointWritingTime(note);
   const wasNewDraft = isNewDraft;
   saveNoteToServer(note, (ok) => {
     if (!ok) return;
     if (wasNewDraft) { currentId = note.id; isNewDraft = false; }
+    note.settings.editCount = (note.settings.editCount || 0) + 1;
     editorDirty = false;
     showSaveDot();
     renderNoteList();
@@ -1797,6 +1847,7 @@ function manualSave() {
 // 타이핑 멈추고 1.2초 뒤 저장을 기다리다가, 탭을 나가거나 숨겨지면
 // (모바일에서 앱 전환/브라우저 종료 등) 기다리지 않고 바로 저장합니다.
 function flushPendingSave() {
+  flushWritingTime(getCurrentNote());
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -2314,6 +2365,7 @@ function init() {
     if (!note) return;
     note.content = editor.value;
     editorDirty = true;
+    trackWritingActivity();
     updateCount(); scheduleSave(); playTypeSound(); applyTypewriterScroll();
   });
   editor.addEventListener('click', applyTypewriterScroll);
@@ -2413,6 +2465,10 @@ function init() {
     } else if (key === 'b') { // 사이드바 접기/펼치기
       e.preventDefault();
       document.getElementById('btn-sidebar-toggle').click();
+    } else if (key === 'i') { // 메모 정보 보기
+      e.preventDefault();
+      const note = getCurrentNote();
+      if (note) showNoteInfo(note);
     } else if (key === 'e') { // 텍스트로 내보내기
       e.preventDefault();
       document.getElementById('btn-export').click();
