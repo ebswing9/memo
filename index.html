@@ -867,6 +867,39 @@ let sidebarView = 'notes'; // 'notes' | 'trash'
 let hoveredNoteId = null; // 사이드바에서 마우스를 올리고 있는 메모 (Delete 키로 바로 삭제하기 위함)
 let editorDirty = false; // 마지막으로 불러온(또는 저장된) 내용 이후로 사용자가 뭔가 입력했는지
 
+// ---- 탭 전환 시 한글 조합 중이던 마지막 글자가 사라지는 문제 대비 ----
+// 한글처럼 조합형 입력은 마지막 글자가 "아직 확정 안 된 상태"인데, 이 상태에서 탭을 바꾸면
+// 브라우저/OS에 따라 그 글자가 취소돼 사라질 수 있어요. 그래서 마지막으로 직접 입력한 내용을 기억해두고,
+// 돌아왔을 때 끝부분 몇 글자만 잘려 있으면 되살립니다.
+let imeComposing = false;
+let pageBlurred = false;
+let lastTypedValue = null;
+let lastTypedCaret = null;
+let lastTypedNote = null;
+
+function restoreLostComposition() {
+  if (imeComposing || lastTypedValue == null) return;
+  const note = getCurrentNote();
+  if (!note || lastTypedNote !== note) return;
+  const ta = document.getElementById('editor');
+  const cur = ta.value;
+  if (cur === lastTypedValue) return;
+  const lost = lastTypedValue.length - cur.length;
+  // 사용자가 직접 지운 경우엔 input 이벤트로 lastTypedValue가 이미 갱신돼 있으니 여기까지 오지 않아요.
+  // "내가 마지막으로 친 내용의 앞부분 그대로, 끝만 짧게 잘린 경우"에만 되살립니다.
+  if (lost > 0 && lost <= 3 && lastTypedValue.startsWith(cur)) {
+    ta.value = lastTypedValue;
+    const pos = lastTypedCaret != null ? Math.min(lastTypedCaret, ta.value.length) : ta.value.length;
+    ta.selectionStart = ta.selectionEnd = pos;
+    if (note.content !== ta.value) {
+      note.content = ta.value;
+      editorDirty = true;
+      scheduleSave();
+    }
+    updateCount();
+  }
+}
+
 // ---- 작성 소요시간 추적 ----
 // 사용자가 실제로 타이핑하는 동안의 시간만 누적합니다 (1분 이상 입력이 없으면 그 구간은 쉬는 시간으로 보고 세지 않아요).
 let writingSessionStart = null;
@@ -1371,6 +1404,7 @@ function reloadSingleNote(id, onDone) {
       if (currentId === id) {
         document.getElementById('title-input').value = fresh.title || '';
         document.getElementById('editor').value = fresh.content || '';
+        lastTypedValue = null;
         applyNoteStyles(fresh);
         updateCount();
       }
@@ -1575,6 +1609,7 @@ function selectNote(id) {
   document.getElementById('editor').disabled = false;
   document.getElementById('title-input').value = note.title || '';
   document.getElementById('editor').value = note.content || '';
+  lastTypedValue = null;
   editorDirty = false;
   applyNoteStyles(note);
   updateCount();
@@ -1596,6 +1631,7 @@ function createNewNote() {
   document.getElementById('editor').disabled = false;
   document.getElementById('title-input').value = '';
   document.getElementById('editor').value = '';
+  lastTypedValue = null;
   editorDirty = false;
   applyNoteStyles(note);
   updateCount();
@@ -1853,7 +1889,18 @@ function flushPendingSave() {
   }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flushPendingSave();
+  if (document.visibilityState === 'hidden') {
+    flushPendingSave();
+  } else {
+    restoreLostComposition();
+    setTimeout(restoreLostComposition, 120); // 돌아온 직후 브라우저가 한 번 더 값을 만지는 경우 대비
+  }
+});
+window.addEventListener('blur', () => { pageBlurred = true; });
+window.addEventListener('focus', () => {
+  pageBlurred = false;
+  restoreLostComposition();
+  setTimeout(restoreLostComposition, 120);
 });
 window.addEventListener('pagehide', flushPendingSave);
 window.addEventListener('beforeunload', flushPendingSave);
@@ -2358,10 +2405,17 @@ function init() {
 
   // ---- 에디터 ----
   const editor = document.getElementById('editor');
-  editor.addEventListener('input', () => {
+  editor.addEventListener('compositionstart', () => { imeComposing = true; });
+  editor.addEventListener('compositionend', () => { imeComposing = false; });
+  editor.addEventListener('input', (e) => {
     const note = getCurrentNote();
     if (!note) return;
+    // 탭이 숨겨지거나 창이 포커스를 잃은 상태에서 들어오는 조합 취소 이벤트는 사용자의 편집이 아니므로 무시
+    if ((document.hidden || pageBlurred) && /Composition/i.test(e.inputType || '')) return;
     note.content = editor.value;
+    lastTypedValue = editor.value;
+    lastTypedCaret = editor.selectionStart;
+    lastTypedNote = note;
     editorDirty = true;
     trackWritingActivity();
     updateCount(); scheduleSave(); playTypeSound(); applyTypewriterScroll();
