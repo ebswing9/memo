@@ -867,37 +867,64 @@ let sidebarView = 'notes'; // 'notes' | 'trash'
 let hoveredNoteId = null; // 사이드바에서 마우스를 올리고 있는 메모 (Delete 키로 바로 삭제하기 위함)
 let editorDirty = false; // 마지막으로 불러온(또는 저장된) 내용 이후로 사용자가 뭔가 입력했는지
 
-// ---- 탭 전환 시 한글 조합 중이던 마지막 글자가 사라지는 문제 대비 ----
-// 한글처럼 조합형 입력은 마지막 글자가 "아직 확정 안 된 상태"인데, 이 상태에서 탭을 바꾸면
-// 브라우저/OS에 따라 그 글자가 취소돼 사라질 수 있어요. 그래서 마지막으로 직접 입력한 내용을 기억해두고,
-// 돌아왔을 때 끝부분 몇 글자만 잘려 있으면 되살립니다.
-let imeComposing = false;
-let pageBlurred = false;
-let lastTypedValue = null;
-let lastTypedCaret = null;
-let lastTypedNote = null;
-
-function restoreLostComposition() {
-  if (imeComposing || lastTypedValue == null) return;
-  const note = getCurrentNote();
-  if (!note || lastTypedNote !== note) return;
-  const ta = document.getElementById('editor');
-  const cur = ta.value;
-  if (cur === lastTypedValue) return;
-  const lost = lastTypedValue.length - cur.length;
-  // 사용자가 직접 지운 경우엔 input 이벤트로 lastTypedValue가 이미 갱신돼 있으니 여기까지 오지 않아요.
-  // "내가 마지막으로 친 내용의 앞부분 그대로, 끝만 짧게 잘린 경우"에만 되살립니다.
-  if (lost > 0 && lost <= 3 && lastTypedValue.startsWith(cur)) {
-    ta.value = lastTypedValue;
-    const pos = lastTypedCaret != null ? Math.min(lastTypedCaret, ta.value.length) : ta.value.length;
-    ta.selectionStart = ta.selectionEnd = pos;
-    if (note.content !== ta.value) {
-      note.content = ta.value;
-      editorDirty = true;
-      scheduleSave();
+// 한글 같은 조합형 입력에서, 탭 전환/포커스 이동 때 "아직 확정 안 된 마지막 글자"가 취소돼 사라지는 걸 막기 위한 장치.
+// - record: 사용자가 직접 입력한 값을 기억 (최근 8개를 시각과 함께)
+// - onBlur: 포커스를 잃는 순간 호출. 직전 40ms 안에 생긴 "끝만 짧게 잘린" 기록은 시스템이 만든 취소로 보고 이전 값으로 되돌림
+// - checkRestore: 돌아왔을 때 화면 값이 기억해둔 값의 "끝만 짧게 잘린 앞부분"이면 되살릴 값을 알려줌
+function createImeGuard() {
+  return {
+    log: [], lastValue: null, lastCaret: null, note: null,
+    reset() { this.log = []; this.lastValue = null; this.lastCaret = null; this.note = null; },
+    record(note, value, caret, t) {
+      this.note = note; this.lastValue = value; this.lastCaret = caret;
+      this.log.push({ value: value, caret: caret, t: t });
+      if (this.log.length > 8) this.log.shift();
+    },
+    onBlur(t) {
+      if (this.lastValue == null) return null;
+      const cutoff = t - 40;
+      let good = null;
+      for (let i = this.log.length - 1; i >= 0; i--) {
+        if (this.log[i].t <= cutoff) { good = this.log[i]; break; }
+      }
+      if (!good) return null;
+      const diff = good.value.length - this.lastValue.length;
+      if (diff > 0 && diff <= 3 && good.value.startsWith(this.lastValue)) {
+        this.lastValue = good.value; this.lastCaret = good.caret;
+        return good.value;
+      }
+      return null;
+    },
+    checkRestore(currentValue) {
+      if (this.lastValue == null || currentValue === this.lastValue) return null;
+      const lost = this.lastValue.length - currentValue.length;
+      if (lost > 0 && lost <= 3 && this.lastValue.startsWith(currentValue)) {
+        return { value: this.lastValue, caret: this.lastCaret };
+      }
+      return null;
     }
-    updateCount();
+  };
+}
+
+let editorBlurred = false; // 에디터가 포커스를 잃은 상태 (사용자 키 입력/클릭/포커스 시 바로 해제돼서 꼬일 일이 없어요)
+const imeGuard = createImeGuard();
+
+// 탭을 다녀온 뒤 화면 값이 "내가 마지막으로 친 내용에서 끝만 짧게 잘린 모양"이면 되살립니다.
+function restoreLostComposition() {
+  const note = getCurrentNote();
+  if (!note || imeGuard.note !== note) return;
+  const ta = document.getElementById('editor');
+  const r = imeGuard.checkRestore(ta.value);
+  if (!r) return;
+  ta.value = r.value;
+  const pos = r.caret != null ? Math.min(r.caret, ta.value.length) : ta.value.length;
+  ta.selectionStart = ta.selectionEnd = pos;
+  if (note.content !== ta.value) {
+    note.content = ta.value;
+    editorDirty = true;
+    scheduleSave();
   }
+  updateCount();
 }
 
 // ---- 작성 소요시간 추적 ----
@@ -1404,7 +1431,7 @@ function reloadSingleNote(id, onDone) {
       if (currentId === id) {
         document.getElementById('title-input').value = fresh.title || '';
         document.getElementById('editor').value = fresh.content || '';
-        lastTypedValue = null;
+        imeGuard.reset();
         applyNoteStyles(fresh);
         updateCount();
       }
@@ -1609,7 +1636,7 @@ function selectNote(id) {
   document.getElementById('editor').disabled = false;
   document.getElementById('title-input').value = note.title || '';
   document.getElementById('editor').value = note.content || '';
-  lastTypedValue = null;
+  imeGuard.reset();
   editorDirty = false;
   applyNoteStyles(note);
   updateCount();
@@ -1631,7 +1658,7 @@ function createNewNote() {
   document.getElementById('editor').disabled = false;
   document.getElementById('title-input').value = '';
   document.getElementById('editor').value = '';
-  lastTypedValue = null;
+  imeGuard.reset();
   editorDirty = false;
   applyNoteStyles(note);
   updateCount();
@@ -1896,9 +1923,7 @@ document.addEventListener('visibilitychange', () => {
     setTimeout(restoreLostComposition, 120); // 돌아온 직후 브라우저가 한 번 더 값을 만지는 경우 대비
   }
 });
-window.addEventListener('blur', () => { pageBlurred = true; });
 window.addEventListener('focus', () => {
-  pageBlurred = false;
   restoreLostComposition();
   setTimeout(restoreLostComposition, 120);
 });
@@ -2224,6 +2249,7 @@ function openSettingsModal() {
 // 초기화
 // ============================================================
 function init() {
+  console.info('[memo] build: ime-guard-v2');
   if (!RESOLVED_GAS_WEBAPP_URL) {
     showGateError('config.js에 GAS_WEBAPP_URL이 설정되지 않았어요. config.js 파일을 확인해주세요.');
   }
@@ -2405,21 +2431,30 @@ function init() {
 
   // ---- 에디터 ----
   const editor = document.getElementById('editor');
-  editor.addEventListener('compositionstart', () => { imeComposing = true; });
-  editor.addEventListener('compositionend', () => { imeComposing = false; });
-  editor.addEventListener('input', (e) => {
+  editor.addEventListener('input', () => {
     const note = getCurrentNote();
     if (!note) return;
-    // 탭이 숨겨지거나 창이 포커스를 잃은 상태에서 들어오는 조합 취소 이벤트는 사용자의 편집이 아니므로 무시
-    if ((document.hidden || pageBlurred) && /Composition/i.test(e.inputType || '')) return;
+    // 탭이 숨겨졌거나 에디터가 포커스를 잃은 상태에서 들어오는 input은 사용자의 편집이 아니라
+    // 시스템이 조합을 취소하며 만든 값이므로 무시합니다.
+    if (document.hidden || editorBlurred) return;
     note.content = editor.value;
-    lastTypedValue = editor.value;
-    lastTypedCaret = editor.selectionStart;
-    lastTypedNote = note;
+    imeGuard.record(note, editor.value, editor.selectionStart, performance.now());
     editorDirty = true;
     trackWritingActivity();
     updateCount(); scheduleSave(); playTypeSound(); applyTypewriterScroll();
   });
+  // 포커스를 잃는 순간, 직전에 시스템이 만든 "끝만 잘린" 값이 있었다면 데이터(note.content)만 먼저 바로잡아
+  // 탭이 숨겨질 때 저장되는 내용에서 마지막 글자가 빠지지 않게 합니다.
+  editor.addEventListener('blur', () => {
+    editorBlurred = true;
+    const note = getCurrentNote();
+    if (!note || imeGuard.note !== note) return;
+    const good = imeGuard.onBlur(performance.now());
+    if (good != null) { note.content = good; editorDirty = true; scheduleSave(); }
+  });
+  editor.addEventListener('focus', () => { editorBlurred = false; restoreLostComposition(); });
+  ['keydown', 'compositionstart', 'pointerdown', 'touchstart'].forEach(ev =>
+    editor.addEventListener(ev, () => { editorBlurred = false; }, { passive: true }));
   editor.addEventListener('click', applyTypewriterScroll);
   editor.addEventListener('keyup', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) applyTypewriterScroll();
